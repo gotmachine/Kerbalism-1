@@ -16,10 +16,10 @@ namespace KERBALISM
 
 			// only show if there is a selected body and that body is not the sun
 			CelestialBody body = Lib.SelectedBody();
-			if (body == null || (body.flightGlobalsIndex == 0 && !Features.Radiation)) return;
+			if (body == null || (Lib.IsSun(body) && !Features.Radiation)) return;
 
 			// shortcut
-			CelestialBody sun = FlightGlobals.Bodies[0];
+			CelestialBody sun = Lib.Sun();
 
 			// for all bodies except the sun
 			if (body != sun)

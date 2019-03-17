@@ -7,7 +7,7 @@
 		public void Analyze(CelestialBody body, double altitude_mult, bool sunlight)
 		{
 			// shortcuts
-			CelestialBody sun = FlightGlobals.Bodies[0];
+			CelestialBody sun = Lib.Sun();
 
 			this.body = body;
 			altitude = body.Radius * altitude_mult;

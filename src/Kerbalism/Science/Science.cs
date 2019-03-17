@@ -260,15 +260,15 @@ namespace KERBALISM
 					case "Surface": b = Lib.Landed(v); break;
 					case "Atmosphere": b = body.atmosphere && v.altitude < body.atmosphereDepth; break;
 					case "Ocean": b = body.ocean && v.altitude < 0.0; break;
-					case "Space": b = body.flightGlobalsIndex != 0 && !Lib.Landed(v) && v.altitude > body.atmosphereDepth; break;
+					case "Space": b = !Lib.IsSun(body) && !Lib.Landed(v) && v.altitude > body.atmosphereDepth; break;
 					case "AbsoluteZero": b = vi.temperature < 30.0; break;
 					case "InnerBelt": b = vi.inner_belt; break;
 					case "OuterBelt": b = vi.outer_belt; break;
 					case "Magnetosphere": b = vi.magnetosphere; break;
 					case "Thermosphere": b = vi.thermosphere; break;
 					case "Exosphere": b = vi.exosphere; break;
-					case "InterPlanetary": b = body.flightGlobalsIndex == 0 && !vi.interstellar; break;
-					case "InterStellar": b = body.flightGlobalsIndex == 0 && vi.interstellar; break;
+					case "InterPlanetary": b = Lib.IsSun(body) && !vi.interstellar; break;
+					case "InterStellar": b = Lib.IsSun(body) && vi.interstellar; break;
 				}
 				if (b) return sit;
 			}
@@ -333,7 +333,7 @@ namespace KERBALISM
 		  }
 
 		  public static bool Space(Vessel v)
-		  {
+		  { // TODO use Lib.IsSun
 			return v.mainBody.flightGlobalsIndex != 0 && !Lib.Landed(v) && !Atmosphere(v);
 		  }
 
@@ -368,12 +368,12 @@ namespace KERBALISM
 		  }
 
 		  public static bool InterPlanetary(Vessel v)
-		  {
+		  { // TODO use Lib.IsSun
 			return v.mainBody.flightGlobalsIndex == 0 && !Cache.VesselInfo(v).interstellar;
 		  }
 
 		  public static bool InterStellar(Vessel v)
-		  {
+		  { // TODO use Lib.IsSun
 			return v.mainBody.flightGlobalsIndex == 0 && Cache.VesselInfo(v).interstellar;
 		  }
 		}*/

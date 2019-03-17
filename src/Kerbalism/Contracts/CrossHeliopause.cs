@@ -61,7 +61,7 @@ namespace KERBALISM.CONTRACTS
 				meet_requirements =
 				  Features.Radiation                                          // radiation is enabled
 				  && end_game                                                 // entered SOI of half the bodies
-				  && Radiation.Info(FlightGlobals.Bodies[0]).model.has_pause  // there is an actual heliopause
+				  && Radiation.Info(Lib.Sun()).model.has_pause                // there is an actual heliopause
 				  && !DB.landmarks.heliopause_crossing;                       // heliopause never crossed before
 			}
 			return meet_requirements;

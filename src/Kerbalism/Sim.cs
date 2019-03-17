@@ -104,7 +104,7 @@ namespace KERBALISM
 		// get distance from the sun
 		public static double SunDistance(Vector3d pos)
 		{
-			CelestialBody sun = FlightGlobals.Bodies[0];
+			CelestialBody sun = Lib.Sun();
 			return Vector3d.Distance(pos, sun.position) - sun.Radius;
 		}
 
@@ -213,7 +213,7 @@ namespace KERBALISM
 		// calculate irradiance in W/m2 from solar flux reflected on a celestial body in direction of the vessel
 		public static double AlbedoFlux(CelestialBody body, Vector3d pos)
 		{
-			CelestialBody sun = FlightGlobals.Bodies[0];
+			CelestialBody sun = Lib.Sun();
 			Vector3d sun_dir = sun.position - body.position;
 			double sun_dist = sun_dir.magnitude;
 			sun_dir /= sun_dist;
@@ -236,7 +236,7 @@ namespace KERBALISM
 		// return irradiance from the surface of a body in W/m2
 		public static double BodyFlux(CelestialBody body, double altitude)
 		{
-			CelestialBody sun = FlightGlobals.Bodies[0];
+			CelestialBody sun = Lib.Sun();
 			Vector3d sun_dir = sun.position - body.position;
 			double sun_dist = sun_dir.magnitude;
 			sun_dir /= sun_dist;
@@ -354,10 +354,10 @@ namespace KERBALISM
 			solar_flux = SolarFlux(SunDistance(position)) * sunlight * atmo_factor;
 
 			// get albedo radiation
-			albedo_flux = body.flightGlobalsIndex == 0 ? 0.0 : AlbedoFlux(body, position);
+			albedo_flux = Lib.IsSun(body) ? 0.0 : AlbedoFlux(body, position);
 
 			// get cooling radiation from the body
-			body_flux = body.flightGlobalsIndex == 0 ? 0.0 : BodyFlux(body, v.altitude);
+			body_flux = Lib.IsSun(body) ? 0.0 : BodyFlux(body, v.altitude);
 
 			// calculate total flux
 			total_flux = solar_flux + albedo_flux + body_flux + BackgroundFlux();
@@ -398,7 +398,7 @@ namespace KERBALISM
 		{
 			// note: for consistency we always consider distances to bodies to be relative to the surface
 			// however, flux, luminosity and irradiance consider distance to the sun center, and not surface
-			dist += FlightGlobals.Bodies[0].Radius;
+			dist += Lib.Sun().Radius;
 
 			// calculate solar flux
 			return SolarLuminosity() / (12.566370614359172 * dist * dist);
@@ -564,7 +564,7 @@ namespace KERBALISM
 
 		public static double Graviolis(Vessel v)
 		{
-			double dist = Vector3d.Distance(v.GetWorldPos3D(), FlightGlobals.Bodies[0].position);
+			double dist = Vector3d.Distance(v.GetWorldPos3D(), Lib.Sun().position);
 			double au = dist / FlightGlobals.GetHomeBody().orbit.semiMajorAxis;
 			return 1.0 - Math.Min(au, 1.0); // 0 at 1AU -> 1 at sun position
 		}

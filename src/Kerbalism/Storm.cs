@@ -16,11 +16,11 @@ namespace KERBALISM
 			if (!Features.SpaceWeather) return;
 
 			// skip the sun
-			if (body.flightGlobalsIndex == 0) return;
+			if (Lib.IsSun(body)) return;
 
 			// skip moons
 			// note: referenceBody is never null here
-			if (body.referenceBody.flightGlobalsIndex != 0) return;
+			if (!Lib.IsSun(body.referenceBody)) return;
 
 			// get body data
 			BodyData bd = DB.Body(body.name);
@@ -89,7 +89,7 @@ namespace KERBALISM
 			if (!Features.SpaceWeather) return;
 
 			// only consider vessels in interplanetary space
-			if (v.mainBody.flightGlobalsIndex != 0) return;
+			if (!Lib.IsSun(v.mainBody)) return;
 
 			// skip unmanned vessels
 			if (vi.crew_count == 0) return;
@@ -190,11 +190,11 @@ namespace KERBALISM
 			if (!Features.SpaceWeather) return true;
 
 			// skip the sun
-			if (body.flightGlobalsIndex == 0) return true;
+			if (Lib.IsSun(body)) return true;
 
 			// skip moons
 			// note: referenceBody is never null here
-			if (body.referenceBody.flightGlobalsIndex != 0) return true;
+			if (!Lib.IsSun(body.referenceBody)) return true;
 
 			// do not skip the body
 			return false;
@@ -205,7 +205,7 @@ namespace KERBALISM
 		public static bool Incoming(Vessel v)
 		{
 			// if in interplanetary space
-			if (v.mainBody.flightGlobalsIndex == 0)
+			if (Lib.IsSun(v.mainBody))
 			{
 				return DB.Vessel(v).storm_state == 1;
 			}
@@ -221,7 +221,7 @@ namespace KERBALISM
 		public static bool InProgress(Vessel v)
 		{
 			// if in interplanetary space
-			if (v.mainBody.flightGlobalsIndex == 0)
+			if (Lib.IsSun(v.mainBody))
 			{
 				return DB.Vessel(v).storm_state == 2;
 			}
@@ -239,7 +239,7 @@ namespace KERBALISM
 		public static bool JustEnded(Vessel v, double delta_time)
 		{
 			// if in interplanetary space
-			if (v.mainBody.flightGlobalsIndex == 0)
+			if (Lib.IsSun(v.mainBody))
 			{
 				return DB.Vessel(v).storm_age < delta_time * 2.0;
 			}
@@ -262,7 +262,7 @@ namespace KERBALISM
 		public static double TimeBeforeCME(Vessel v)
 		{
 			// if in interplanetary space
-			if (v.mainBody.flightGlobalsIndex == 0)
+			if (Lib.IsSun(v.mainBody))
 			{
 				VesselData vd = DB.Vessel(v);
 				return TimeBeforeCME(vd.storm_time, vd.storm_age);
@@ -287,7 +287,7 @@ namespace KERBALISM
 		public static double TimeLeftCME(Vessel v)
 		{
 			// if in interplanetary space
-			if (v.mainBody.flightGlobalsIndex == 0)
+			if (Lib.IsSun(v.mainBody))
 			{
 				VesselData vd = DB.Vessel(v);
 				return TimeLeftCME(vd.storm_time, vd.storm_age);

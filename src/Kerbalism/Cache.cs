@@ -57,7 +57,7 @@ namespace KERBALISM
 			powered = ResourceCache.Info(v, "ElectricCharge").amount > double.Epsilon;
 
 			// determine if in sunlight, calculate sun direction and distance
-			sunlight = Sim.RaytraceBody(v, position, FlightGlobals.Bodies[0], out sun_dir, out sun_dist) ? 1.0 : 0.0;
+			sunlight = Sim.RaytraceBody(v, position, Lib.Sun(), out sun_dir, out sun_dist) ? 1.0 : 0.0;
 
 			// environment stuff
 			atmo_factor = Sim.AtmosphereFactor(v.mainBody, position, sun_dir);
@@ -67,7 +67,7 @@ namespace KERBALISM
 			landed = Lib.Landed(v);
 			zerog = !landed && (!v.mainBody.atmosphere || v.mainBody.atmosphereDepth < v.altitude);
 
-			if (v.mainBody.flightGlobalsIndex != 0 && TimeWarp.CurrentRate > 1000.0f)
+			if (!Lib.IsSun(v.mainBody) && TimeWarp.CurrentRate > 1000.0f)
 			{
 				highspeedWarp(v);
 			}

@@ -752,11 +752,29 @@ namespace KERBALISM
 
 		// --- BODY -----------------------------------------------------------------
 
+		public static CelestialBody Sun() {
+			CelestialBody body = FlightGlobals.GetHomeBody();
+			do
+			{
+				if (IsSun(body)) return body;
+				body = body.referenceBody;
+			} while (true);
+		}
+
+		public static Boolean IsSun (CelestialBody body)
+		{
+			if (body.flightGlobalsIndex == 0) return true;
+			if (body.GetTemperature(0) > 1000) return true;
+			if (body.referenceBody == null) return true;
+			return false;
+		}
+
 		// return reference body of the planetary system that contain the specified body
 		public static CelestialBody PlanetarySystem( CelestialBody body )
 		{
-			if (body.flightGlobalsIndex == 0) return body;
-			while (body.referenceBody.flightGlobalsIndex != 0) body = body.referenceBody;
+			CelestialBody sun = Sun();
+			if (body.flightGlobalsIndex == sun.flightGlobalsIndex) return body;
+			while (body.referenceBody.flightGlobalsIndex != sun.flightGlobalsIndex) body = body.referenceBody;
 			return body;
 		}
 
