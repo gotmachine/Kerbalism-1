@@ -358,7 +358,7 @@ namespace KERBALISM
 
 	public interface IAntennaInfoFactory
 	{
-		IAntennaInfo Create(Vessel v, bool storm);
+		IAntennaInfo Create(Vessel v, bool powered, bool storm);
 	}
 
 } // KERBALISM
