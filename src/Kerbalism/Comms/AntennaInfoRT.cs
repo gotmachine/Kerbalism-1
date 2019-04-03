@@ -1,13 +1,18 @@
-﻿namespace KERBALISM
+﻿using System;
+using System.Collections.Generic;
+
+namespace KERBALISM
 {
 	/// <summary> Return antenna info for RemoteTech </summary>
-	public sealed class AntennaInfoRT
+	public sealed class AntennaInfoRT: IAntennaInfo
 	{
-		/// <summary> science data rate. note that internal transmitters can not transmit science data only telemetry data </summary>
-		public double rate = 0.0;
-
-		/// <summary> ec cost </summary>
-		public double ec = 0.0;
+		private double rate = 0.0;
+		private double ec = 0.0;
+		private bool linked;
+		private LinkStatus linkStatus;
+		private string target_name;
+		private double strength;
+		private LinkLeg[] linkLegs;
 
 		public AntennaInfoRT(Vessel v)
 		{
@@ -88,6 +93,70 @@
 					}
 				}
 			}
+
+			linked = RemoteTech.Connected(v.id);
+			if (!linked) linked = RemoteTech.ConnectedToKSC(v.id);
+			if (!linked)
+			{
+				if (RemoteTech.GetCommsBlackout(v.id))
+					linkStatus = LinkStatus.plasma;
+				else
+					linkStatus = LinkStatus.no_link;
+				ec = 0;
+				return;
+			}
+
+			linkStatus = RemoteTech.TargetsKSC(v.id) ? LinkStatus.direct_link : LinkStatus.indirect_link;
+			target_name = linkStatus == LinkStatus.direct_link
+				? Lib.Ellipsis("DSN: " + (RemoteTech.NameTargetsKSC(v.id) ?? ""), 20)
+				: Lib.Ellipsis(RemoteTech.NameFirstHopToKSC(v.id) ?? "", 20);
+
+			var controlPath = RemoteTech.GetCommsControlPath(v.id);
+
+			// Get the lowest rate in ControlPath
+			if (controlPath != null)
+			{
+				// Get rate from the firstHop, each Hop will do the same logic, then we will have the lowest rate for the path
+				if (controlPath.Length > 0)
+				{
+					double dist = RemoteTech.GetCommsDistance(v.id, controlPath[0]);
+					strength = 1 - (dist / Math.Max(RemoteTech.GetCommsMaxDistance(v.id, controlPath[0]), 1));
+
+					// If using relay, get the lowest rate
+					if (linkStatus != LinkStatus.direct_link)
+					{
+						Vessel target = FlightGlobals.FindVessel(controlPath[0]);
+						strength *= Cache.VesselInfo(target).connection.strength;
+						rate = Math.Min(Cache.VesselInfo(target).connection.rate, rate * strength);
+					}
+					else
+						rate *= strength;
+				}
+
+				List<LinkLeg> legs = new List<LinkLeg>();
+				Guid i = v.id;
+				foreach (Guid id in controlPath)
+				{
+					LinkLeg leg = new LinkLeg();
+
+					leg.text = Lib.Ellipsis(RemoteTech.GetSatelliteName(i) + " \\ " + RemoteTech.GetSatelliteName(id), 35);
+					leg.linkQuality = Math.Ceiling((1 - (RemoteTech.GetCommsDistance(i, id) / RemoteTech.GetCommsMaxDistance(i, id))) * 10000) / 10000;
+					leg.tooltip = "\nDistance: " + Lib.HumanReadableRange(RemoteTech.GetCommsDistance(i, id)) +
+						"\nMax Distance: " + Lib.HumanReadableRange(RemoteTech.GetCommsMaxDistance(i, id));
+					legs.Add(leg);
+
+					i = id;
+				}
+				linkLegs = legs.ToArray();
+			}
 		}
+
+		public bool Linked => linked;
+		public double EcConsumption => ec;
+		public double DataRate => rate;
+		public LinkStatus LinkStatus => linkStatus;
+		public double Strength => strength;
+		public string TargetName => target_name;
+		public LinkLeg[] LinkLegs => linkLegs;
 	}
 }

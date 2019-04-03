@@ -9,7 +9,35 @@ using System.Collections.Generic;
 
 namespace KERBALISM
 {
+	/// <summary> signal connection link status </summary>
+	public enum LinkStatus
+	{
+		direct_link,
+		indirect_link,  // relayed signal
+		no_link,
+		plasma,         // plasma blackout on reentry
+		storm           // cme storm blackout
+	};
 
+	/// <summary> info that will be displayed in the kerbalism UI </summary>
+	public class LinkLeg
+	{
+		public string text = string.Empty;
+		public double linkQuality = 1;
+		public string tooltip = string.Empty;
+	}
+
+	/// <summary> info that will be used by kerbalism's transmission system + UI </summary>
+	public interface IAntennaInfo
+	{
+		bool Linked { get; }
+		double EcConsumption { get; }
+		double DataRate { get; }
+		LinkStatus LinkStatus { get; }
+		double Strength { get; }
+		string TargetName { get; }
+		LinkLeg[] LinkLegs { get; }
+	}
 
 	public static class API
 	{
@@ -313,10 +341,25 @@ namespace KERBALISM
 			}
 		}
 
+		public static IAntennaInfoFactory SetAntennaInfoFactory(IAntennaInfoFactory factory)
+		{
+			IAntennaInfoFactory previous = antennaInfoFactory;
+			antennaInfoFactory = factory;
+			return previous;
+		}
+
+		public static IAntennaInfoFactory GetAntennaInfoFactory()
+		{
+			return antennaInfoFactory;
+		}
+
+		private static IAntennaInfoFactory antennaInfoFactory = null;
 	}
 
+	public interface IAntennaInfoFactory
+	{
+		IAntennaInfo Create(Vessel v, bool storm);
+	}
 
 } // KERBALISM
-
-
 
