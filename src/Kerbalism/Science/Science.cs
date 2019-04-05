@@ -7,7 +7,6 @@ using UnityEngine;
 namespace KERBALISM
 {
 
-
 	public static class Science
 	{
 		// hard-coded transmission buffer size in Mb
@@ -16,8 +15,6 @@ namespace KERBALISM
 		// pseudo-ctor
 		public static void Init()
 		{
-			experiments = new Dictionary<string, ExperimentInfo>();
-
 			// make the science dialog invisible, just once
 			if (Features.Science)
 			{
@@ -162,8 +159,14 @@ namespace KERBALISM
 
 
 		// return value of some data about a subject, in science credits
-		public static float Value(string subject_id, double size)
+		public static float Value(string subject_id, double size = 0)
 		{
+			if(size < double.Epsilon)
+			{
+				var exp = Science.Experiment(subject_id);
+				size = exp.max_amount;
+			}
+
 			// get science subject
 			// - if null, we are in sandbox mode
 			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
@@ -210,20 +213,23 @@ namespace KERBALISM
 			return info;
 		}
 
-
-		// create a new subject entry in the RnD
-		// - experiment: experiment_id
-		// - situation: an arbitrary situation, can insert biome at the end
-		// - body: celestial body involved
-		// - biome: biome involved, or empty
-		// - multiplier: science multiplier for the body/situation
-		public static string Generate_subject(ScienceExperiment experiment, CelestialBody body, ExperimentSituations sit, string biome)
+		public static string Generate_subject_id(string experiment_id, Vessel v)
 		{
+			var body = v.mainBody;
+			var experiment = ResearchAndDevelopment.GetExperiment(experiment_id);
+			var sit = ScienceUtil.GetExperimentSituation(v);
+			var biome = ScienceUtil.GetExperimentBiome(v.mainBody, v.latitude, v.longitude);
+
 			// generate subject id
-			string subject_id = Lib.BuildString(experiment.id, "@", body.name, sit + (experiment.BiomeIsRelevantWhile(sit) ? biome : ""));
+			return Lib.BuildString(experiment_id, "@", body.name, sit + (experiment.BiomeIsRelevantWhile(sit) ? biome : ""));
+		}
+
+		public static string Generate_subject(string experiment_id, Vessel v)
+		{
+			var subject_id = Generate_subject_id(experiment_id, v);
 
 			// in sandbox, do nothing else
-			if (ResearchAndDevelopment.Instance == null) return subject_id;
+				if (ResearchAndDevelopment.Instance == null) return subject_id;
 
 			// if the subject id was never added to RnD
 			if (ResearchAndDevelopment.GetSubjectByID(subject_id) == null)
@@ -238,7 +244,10 @@ namespace KERBALISM
 				  "scienceSubjects"
 				);
 
-				float multiplier = Multiplier(body, sit);
+				var experiment = ResearchAndDevelopment.GetExperiment(experiment_id);
+				var sit = ScienceUtil.GetExperimentSituation(v);
+				var biome = ScienceUtil.GetExperimentBiome(v.mainBody, v.latitude, v.longitude);
+				float multiplier = Multiplier(v.mainBody, sit);
 				var cap = multiplier * experiment.baseValue;
 
 				// create new subject
@@ -275,7 +284,7 @@ namespace KERBALISM
 			return 0;
 		}
 
-		public static string TestRequirements(string requirements, Vessel v)
+		public static string TestRequirements(string experiment_id, string requirements, Vessel v)
 		{
 			CelestialBody body = v.mainBody;
 			Vessel_info vi = Cache.VesselInfo(v);
@@ -360,6 +369,15 @@ namespace KERBALISM
 				if (!good) return s;
 			}
 
+			// if we want to test against the stock KSP experiment,
+			// we have to create the subject at this point
+			Science.Generate_subject(experiment_id, v);
+
+			var exp = ResearchAndDevelopment.GetExperiment(experiment_id);
+			var sit = ScienceUtil.GetExperimentSituation(v);
+			if (!exp.IsAvailableWhile(sit, v.mainBody))
+				return "Invalid situation";
+
 			return string.Empty;
 		}
 
@@ -411,11 +429,16 @@ namespace KERBALISM
 			int i = experiment_id.IndexOf('@');
 			var id = i > 0 ? experiment_id.Substring(0, i) : experiment_id;
 
-			if (sampleMasses.ContainsKey(id) && sampleMasses[id] - sampleMass > double.Epsilon)
+			if (sampleMasses.ContainsKey(id))
 			{
-				Lib.Log("Warning: different sample masses for Experiment " + id + " defined.");
+				if (Math.Abs(sampleMasses[id] - sampleMass) > double.Epsilon)
+					Lib.Log("Science Warning: different sample masses for Experiment " + id + " defined.");
 			}
-			sampleMasses.Add(id, sampleMass);
+			else
+			{
+				sampleMasses.Add(id, sampleMass);
+				Lib.Log("Science: registered sample mass for " + id + ": " + sampleMass.ToString("F3"));
+			}
 		}
 
 		public static double GetSampleMass(string experiment_id)
@@ -429,7 +452,7 @@ namespace KERBALISM
 		}
 
 		// experiment info cache
-		static Dictionary<string, ExperimentInfo> experiments;
+		static readonly Dictionary<string, ExperimentInfo> experiments = new Dictionary<string, ExperimentInfo>();
 		readonly static Dictionary<string, double> sampleMasses = new Dictionary<string, double>();
 
 	}

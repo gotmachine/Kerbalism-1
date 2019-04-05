@@ -43,6 +43,7 @@ namespace KERBALISM
 			}
 
 			name = Lib.ConfigValue(node, "name", "DRIVE");
+			is_private = Lib.ConfigValue(node, "is_private", false);
 
 			// parse capacities. be generous with default values for backwards
 			// compatibility (drives had unlimited storage before this)
@@ -74,6 +75,7 @@ namespace KERBALISM
 			}
 
 			node.AddValue("name", name);
+			node.AddValue("is_private", is_private);
 			node.AddValue("dataCapacity", dataCapacity);
 			node.AddValue("sampleCapacity", sampleCapacity);
 
@@ -89,7 +91,7 @@ namespace KERBALISM
 		// add science data, creating new file or incrementing existing one
 		public bool Record_file(string subject_id, double amount, bool allowImmediateTransmission = true, bool silentTransmission = false)
 		{
-			if (FilesSize() + amount > dataCapacity)
+			if (dataCapacity >= 0 && FilesSize() + amount > dataCapacity)
 				return false;
 
 			// create new data or get existing one
@@ -129,10 +131,13 @@ namespace KERBALISM
 		public bool Record_sample(string subject_id, double amount, double mass)
 		{
 			int currentSampleSlots = SamplesSize();
-			if(!samples.ContainsKey(subject_id) && currentSampleSlots >= sampleCapacity)
+			if (sampleCapacity >= 0)
 			{
-				// can't take a new sample if we're already at capacity
-				return false;
+				if (!samples.ContainsKey(subject_id) && currentSampleSlots >= sampleCapacity)
+				{
+					// can't take a new sample if we're already at capacity
+					return false;
+				}
 			}
 
 			Sample sample;
@@ -215,7 +220,7 @@ namespace KERBALISM
 		}
 
 		// move all data to another drive
-		public bool Move(Drive destination, bool moveSamples = false)
+		public bool Move(Drive destination, bool moveSamples = true)
 		{
 			bool result = true;
 
@@ -252,6 +257,7 @@ namespace KERBALISM
 
 		public double FileCapacityAvailable()
 		{
+			if (dataCapacity < 0) return double.MaxValue;
 			return dataCapacity - FilesSize();
 		}
 
@@ -267,6 +273,8 @@ namespace KERBALISM
 
 		public double SampleCapacityAvailable(string filename = "")
 		{
+			if (sampleCapacity < 0) return double.MaxValue;
+
 			double result = Lib.SlotsToSampleSize(sampleCapacity - SamplesSize());
 			if(samples.ContainsKey(filename)) {
 				int slotsForMyFile = Lib.SampleSizeToSlots(samples[filename].size);
@@ -303,7 +311,7 @@ namespace KERBALISM
 		}
 
 		// transfer data between two vessels
-		public static void Transfer(Vessel src, Vessel dst, bool samples = false)
+		public static void Transfer(Vessel src, Vessel dst, bool samples = true)
 		{
 			double dataAmount = 0.0;
 			int sampleSlots = 0;
@@ -357,6 +365,7 @@ namespace KERBALISM
 		public double dataCapacity;
 		public int sampleCapacity;
 		public string name = String.Empty;
+		public bool is_private = false;
 	}
 
 

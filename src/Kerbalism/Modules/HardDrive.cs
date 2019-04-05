@@ -9,9 +9,12 @@ namespace KERBALISM
 
 	public sealed class HardDrive : PartModule, IScienceDataContainer, ISpecifics, IModuleInfo, IPartMassModifier
 	{
-		[KSPField] public double dataCapacity = 102400.0;       // drive capacity, in Mb
-		[KSPField] public int sampleCapacity = 100;             // drive capacity, in slots
+		[KSPField] public double dataCapacity = -1;             // drive capacity, in Mb. -1 = unlimited
+		[KSPField] public int sampleCapacity = -1;              // drive capacity, in slots. -1 = unlimited
 		[KSPField] public string title = "Kerbodyne ZeroBit";   // drive name to be displayed in file manager
+		[KSPField] public string experiment_id = string.Empty;  // if set, restricts write access to the experiment on the same part, with the given experiment_id.
+
+		[KSPField(isPersistant = true)] public uint hdId = 0;
 
 		[KSPField(guiActive = true, guiName = "Capacity", guiActiveEditor = true)] public string Capacity;
 
@@ -23,12 +26,14 @@ namespace KERBALISM
 			// don't break tutorial scenarios
 			if (Lib.DisableScenario(this)) return;
 
+			if (hdId == 0) hdId = part.flightID;
+
 			if(drive == null)
 			{
 				if (Lib.IsEditor())
 					drive = new Drive(title, dataCapacity, sampleCapacity);
 				else
-					drive = DB.Vessel(vessel).DriveForPart(title, part, dataCapacity, sampleCapacity);
+					drive = DB.Vessel(vessel).DriveForPart(title, hdId, dataCapacity, sampleCapacity);
 			}
 
 			UpdateCapacity();
@@ -38,11 +43,25 @@ namespace KERBALISM
 		{
 			base.OnLoad(node);
 
-			if(Lib.IsEditor())
+			if (HighLogic.LoadedScene == GameScenes.LOADING)
+			{
+				drive = new Drive();
+				return;
+			}
+
+			if (Lib.IsEditor())
 				drive = new Drive();
 			else
-				drive = DB.Vessel(vessel).DriveForPart(title, part, dataCapacity, sampleCapacity);
+				drive = DB.Vessel(vessel).DriveForPart(title, hdId, dataCapacity, sampleCapacity);
 
+			drive.is_private = experiment_id.Length > 0;
+			UpdateCapacity();
+		}
+
+		public void SetDrive(Drive drive)
+		{
+			this.drive = drive;
+			drive.is_private = experiment_id.Length > 0;
 			UpdateCapacity();
 		}
 
@@ -64,17 +83,27 @@ namespace KERBALISM
 				Events["StoreData"].active = v != null && v.isEVA && !EVA.IsDead(v) && drive.FilesSize() > double.Epsilon;
 
 				// hide TransferLocation button
-				Events["TransferData"].active = true;
+				var isPrivate = experiment_id.Length > 0;
+				Events["TransferData"].active = !isPrivate;
+				Events["TransferData"].guiActive = !isPrivate;
 			}
 		}
 
 		private void UpdateCapacity()
 		{
+			if (dataCapacity < 0 || sampleCapacity < 0)
+			{
+				Fields["Capacity"].guiActive = false;
+				Fields["Capacity"].guiActiveEditor = false;
+				return;
+			}
+
 			totalSampleMass = 0;
 			foreach (var sample in drive.samples.Values) totalSampleMass += sample.mass;
 
 			double availableDataCapacity = dataCapacity;
 			int availableSlots = sampleCapacity;
+
 			if (Lib.IsFlight())
 			{
 				availableDataCapacity = drive.FileCapacityAvailable();
@@ -108,7 +137,7 @@ namespace KERBALISM
 		}
 
 
-		[KSPEvent(guiActive = true, guiName = "#KERBALISM_HardDrive_TransferData", active = false)]
+		[KSPEvent(guiName = "#KERBALISM_HardDrive_TransferData", active = false)]
 		public void TransferData()
 		{
 			var hardDrives = vessel.FindPartModulesImplementing<HardDrive>();
@@ -128,7 +157,7 @@ namespace KERBALISM
 			if (v == null || EVA.IsDead(v)) return;
 
 			// transfer data
-			Drive.Transfer(vessel, v, v.isEVA);
+			Drive.Transfer(vessel, v/*, v.isEVA*/);
 		}
 
 
@@ -140,7 +169,7 @@ namespace KERBALISM
 			if (v == null || EVA.IsDead(v)) return;
 
 			// transfer data
-			Drive.Transfer(v, vessel, v.isEVA);
+			Drive.Transfer(v, vessel/*, v.isEVA*/);
 		}
 
 
@@ -154,18 +183,19 @@ namespace KERBALISM
 		// science container implementation
 		public ScienceData[] GetData()
 		{
-			Lib.Log("SCI GetData called " );
 			// generate and return stock science data
 			List<ScienceData> data = new List<ScienceData>();
 			foreach (var pair in drive.files)
 			{
 				File file = pair.Value;
-				data.Add(new ScienceData((float)file.size, 1.0f, 1.0f, pair.Key, Science.Experiment(pair.Key).fullname));
+				var exp = Science.Experiment(pair.Key);
+				data.Add(new ScienceData((float)file.size, 1.0f, 1.0f, pair.Key, exp.FullName(pair.Key)));
 			}
 			foreach (var pair in drive.samples)
 			{
 				Sample sample = pair.Value;
-				data.Add(new ScienceData((float)sample.size, 0.0f, 0.0f, pair.Key, Science.Experiment(pair.Key).fullname));
+				var exp = Science.Experiment(pair.Key);
+				data.Add(new ScienceData((float)sample.size, 0.0f, 0.0f, pair.Key, exp.FullName(pair.Key)));
 			}
 			return data.ToArray();
 		}
@@ -174,8 +204,6 @@ namespace KERBALISM
 		// EVAs returning should get a warning if needed
 		public void ReturnData(ScienceData data)
 		{
-			Lib.Log("SCI ReturnData called " + data.subjectID);
-
 			// store the data
 			bool result = false;
 			if (data.baseTransmitValue > float.Epsilon || data.transmitBonus > double.Epsilon)
@@ -194,7 +222,6 @@ namespace KERBALISM
 
 		public void DumpData(ScienceData data)
 		{
-			Lib.Log("SCI DumpData called " + data.subjectID);
 			// remove the data
 			if (data.baseTransmitValue > float.Epsilon || data.transmitBonus > double.Epsilon)
 			{
@@ -243,8 +270,8 @@ namespace KERBALISM
 		public Specifics Specs()
 		{
 			Specifics specs = new Specifics();
-			specs.Add("File capacity", Lib.HumanReadableDataSize(dataCapacity));
-			specs.Add("Sample capacity", Lib.HumanReadableSampleSize(sampleCapacity));
+			specs.Add("File capacity", dataCapacity >= 0 ? Lib.HumanReadableDataSize(dataCapacity) : "unlimited");
+			specs.Add("Sample capacity", sampleCapacity >= 0 ? Lib.HumanReadableSampleSize(sampleCapacity) : "unlimited");
 			return specs;
 		}
 

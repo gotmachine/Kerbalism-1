@@ -35,15 +35,20 @@ namespace KERBALISM
  			// time-out simulation
 			if (p.Timeout(vi)) return;
 
-			foreach (var idDrivePair in DB.Vessel(v).drives)
+			var drives = DB.Vessel(v).drives;
+			foreach (var idDrivePair in drives)
 			{
 				var drive = idDrivePair.Value;
 
-				if (drive.dataCapacity > double.Epsilon)
+				// draw data section
+				if (drive.dataCapacity > double.Epsilon || drive.files.Count > 0)
 				{
-					// draw data section
-					p.AddSection(Lib.BuildString("DATA ", drive.name, " ", Lib.HumanReadableDataSize(drive.dataCapacity),
-												 " (", Lib.HumanReadablePerc(drive.FilesSize() / drive.dataCapacity), ")"));
+					var title = "DATA " + drive.name;
+					title += ", " + Lib.HumanReadableDataSize(drive.FilesSize());
+					if (drive.dataCapacity > 0)
+						title += Lib.BuildString(" (", Lib.HumanReadablePerc(drive.FilesSize() / drive.dataCapacity), ")");
+					p.AddSection(title);
+
 					foreach (var pair in drive.files)
 					{
 						string filename = pair.Key;
@@ -53,16 +58,17 @@ namespace KERBALISM
 					if (drive.files.Count == 0) p.AddContent("<i>no files</i>", string.Empty);
 				}
 
-				if (drive.sampleCapacity > 0)
+				if (drive.sampleCapacity > 0 || drive.samples.Count > 0)
 				{
 					double mass = 0;
 					foreach (var sample in drive.samples.Values) mass += sample.mass;
 
-					// draw samples section
-					p.AddSection(Lib.BuildString("SAMPLES ", drive.name, " ",
-												 Lib.HumanReadableSampleSize(drive.sampleCapacity),
-					                             " (", Lib.HumanReadablePerc((double)(drive.SamplesSize()) / (double)(drive.sampleCapacity)), ") ",
-												 Lib.HumanReadableMass(mass)));
+					var title = "SAMPLES " + drive.name;
+					title += ", " + Lib.HumanReadableSampleSize(mass);
+					if (drive.sampleCapacity > 0)
+						title += Lib.BuildString(" (", Lib.HumanReadablePerc((double)(drive.SamplesSize()) / (double)(drive.sampleCapacity)), ") ");
+					p.AddSection(title);
+
 					foreach (var pair in drive.samples)
 					{
 						string filename = pair.Key;
@@ -85,13 +91,13 @@ namespace KERBALISM
 			  "<b>",
 			  Lib.Ellipsis(exp.name, Styles.ScaleStringLength(short_strings ? 24 : 38)),
 			  "</b> <size=", Styles.ScaleInteger(10).ToString(), ">",
-			  Lib.Ellipsis(exp.situation, Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.name, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
+			  Lib.Ellipsis(ExperimentInfo.Situation(filename), Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.name, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
 			  "</size>"
 			);
 			string exp_tooltip = Lib.BuildString
 			(
 			  exp.name, "\n",
-			  "<color=#aaaaaa>", exp.situation, "</color>"
+			  "<color=#aaaaaa>", ExperimentInfo.Situation(filename), "</color>"
 			);
 			double exp_value = Science.Value(filename, file.size);
 			if (exp_value > double.Epsilon) exp_tooltip = Lib.BuildString(exp_tooltip, "\n<b>", Lib.HumanReadableScience(exp_value), "</b>");
@@ -103,7 +109,7 @@ namespace KERBALISM
 			p.AddIcon(Icons.toggle_red, "Delete the file", () => Lib.Popup
 			(
 			  "Warning!",
-			  Lib.BuildString("Do you really want to delete ", exp.fullname, "?"),
+			  Lib.BuildString("Do you really want to delete ", exp.FullName(filename), "?"),
 			  new DialogGUIButton("Delete it", () => drive.files.Remove(filename)),
 			  new DialogGUIButton("Keep it", () => { })
 			));
@@ -120,13 +126,13 @@ namespace KERBALISM
 			  "<b>",
 			  Lib.Ellipsis(exp.name, Styles.ScaleStringLength(short_strings ? 24 : 38)),
 			  "</b> <size=", Styles.ScaleInteger(10).ToString(), ">",
-			  Lib.Ellipsis(exp.situation, Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.name, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
+			  Lib.Ellipsis(ExperimentInfo.Situation(filename), Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.name, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
 			  "</size>"
 			);
 			string exp_tooltip = Lib.BuildString
 			(
 			  exp.name, "\n",
-			  "<color=#aaaaaa>", exp.situation, "</color>"
+			  "<color=#aaaaaa>", ExperimentInfo.Situation(filename), "</color>"
 			);
 			double exp_value = Science.Value(filename, sample.size);
 			if (exp_value > double.Epsilon) exp_tooltip = Lib.BuildString(exp_tooltip, "\n<b>", Lib.HumanReadableScience(exp_value), "</b>");
@@ -137,7 +143,7 @@ namespace KERBALISM
 			p.AddIcon(Icons.toggle_red, "Dump the sample", () => Lib.Popup
 			(
 			  "Warning!",
-			   Lib.BuildString("Do you really want to dump ", exp.fullname, "?"),
+			   Lib.BuildString("Do you really want to dump ", exp.FullName(filename), "?"),
 			   new DialogGUIButton("Dump it", () => drive.samples.Remove(filename)),
 			   new DialogGUIButton("Keep it", () => { })
 			));

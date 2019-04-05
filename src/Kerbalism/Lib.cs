@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Text;
 using UnityEngine;
 using CommNet;
+using KSP.Localization;
 
 namespace KERBALISM
 {
@@ -731,9 +732,9 @@ namespace KERBALISM
 
 		public static string HumanReadableSampleSize(int slots)
 		{
-			if (slots <= 0) return Lib.BuildString("no ", "bags");
+			if (slots <= 0) return Lib.BuildString("no ", Localizer.Format("#KERBALISM_Generic_SLOT"));
 
-			return Lib.BuildString(slots.ToString(), " ", slots > 1 ? "bags" : "bag");
+			return Lib.BuildString(slots.ToString(), " ", slots > 1 ? Localizer.Format("#KERBALISM_Generic_SLOTS") : Localizer.Format("#KERBALISM_Generic_SLOT"));
 		}
 
 		public static int SampleSizeToSlots(double size)
@@ -935,18 +936,26 @@ namespace KERBALISM
 		public static UInt64 VesselID( Vessel v )
 		{
 			// Lesson learned: v.persistendId is not unique. Far from it, in fact.
-			byte[] b = v.id.ToByteArray();
-			UInt64 result = BitConverter.ToUInt64(b, 0);
-			result ^= BitConverter.ToUInt64(b, 8);
-			return result;
+
+			// neither is this ----vvv (see https://github.com/steamp0rt/Kerbalism/issues/370)
+			//byte[] b = v.id.ToByteArray();
+			//UInt64 result = BitConverter.ToUInt64(b, 0);
+			//result ^= BitConverter.ToUInt64(b, 8);
+			//return result;
+			// --------------------^^^
+
+			// maybe this?
+			return RootID(v);
 		}
 
 		public static UInt64 VesselID( ProtoVessel pv )
 		{
-			byte[] b = pv.vesselID.ToByteArray();
-			UInt64 result = BitConverter.ToUInt64(b, 0);
-			result ^= BitConverter.ToUInt64(b, 8);
-			return result;
+			// nope
+			//byte[] b = pv.vesselID.ToByteArray();
+			//UInt64 result = BitConverter.ToUInt64(b, 0);
+			//result ^= BitConverter.ToUInt64(b, 8);
+			//return result;
+			return pv.protoPartSnapshots[pv.rootIndex].flightID;
 		}
 
 		// return the flight id of the root part of a vessel
@@ -1744,15 +1753,6 @@ namespace KERBALISM
 			);
 		}
 
-		public static UInt32 GetPartId(Part part)
-		{
-			return part.flightID ^ part.persistentId;
-		}
-
-		public static UInt32 GetPartId(ProtoPartSnapshot part)
-		{
-			return part.flightID ^ part.persistentId;
-		}
 		// --- PROTO ----------------------------------------------------------------
 
 		public static class Proto
