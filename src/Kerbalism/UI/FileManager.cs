@@ -6,7 +6,9 @@ using UnityEngine;
 namespace KERBALISM
 {
 
-
+	// TODO file transfer buttons
+	// TODO reorganize files per part
+	// TODO Show/Hide empty drives
 	public static class FileManager
 	{
 
@@ -115,21 +117,21 @@ namespace KERBALISM
 		static void Render_file(Panel p, uint partId, string filename, File file, Drive drive, bool short_strings, double rate)
 		{
 			// get experiment info
-			ExperimentInfo exp = Science.Experiment(filename);
+			ExperimentVariantInfo exp = Science.Experiment(filename);
 
 			// render experiment name
 			string exp_label = Lib.BuildString
 			(
 			  "<b>",
-			  Lib.Ellipsis(exp.name, Styles.ScaleStringLength(short_strings ? 24 : 38)),
+			  Lib.Ellipsis(exp.title, Styles.ScaleStringLength(short_strings ? 24 : 38)),
 			  "</b> <size=", Styles.ScaleInteger(10).ToString(), ">",
-			  Lib.Ellipsis(ExperimentInfo.Situation(filename), Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.name, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
+			  Lib.Ellipsis(ExperimentVariantInfo.Situation(filename), Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.title, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
 			  "</size>"
 			);
 			string exp_tooltip = Lib.BuildString
 			(
-			  exp.name, "\n",
-			  "<color=#aaaaaa>", ExperimentInfo.Situation(filename), "</color>"
+			  exp.title, "\n",
+			  "<color=#aaaaaa>", ExperimentVariantInfo.Situation(filename), "</color>"
 			);
 			double exp_value = Science.Value(filename, file.size);
 			if (exp_value >= 0.1) exp_tooltip = Lib.BuildString(exp_tooltip, "\n<b>", Lib.HumanReadableScience(exp_value), "</b>");
@@ -141,8 +143,8 @@ namespace KERBALISM
 			p.AddIcon(Icons.toggle_red, "Delete the file", () =>
 				{
 					Lib.Popup("Warning!",
-						Lib.BuildString("Do you really want to delete ", exp.FullName(filename), "?"),
-						new DialogGUIButton("Delete it", () => drive.files.Remove(filename)),
+						Lib.BuildString("Do you really want to delete ", exp.SubjectName(filename), "?"),
+						new DialogGUIButton("Delete it", () => drive.Delete_file(filename)),
 						new DialogGUIButton("Keep it", () => { }));
 				}
 			);
@@ -151,21 +153,21 @@ namespace KERBALISM
 		static void Render_sample(Panel p, uint partId, string filename, Sample sample, Drive drive, bool short_strings)
 		{
 			// get experiment info
-			ExperimentInfo exp = Science.Experiment(filename);
+			ExperimentVariantInfo exp = Science.Experiment(filename);
 
 			// render experiment name
 			string exp_label = Lib.BuildString
 			(
 			  "<b>",
-			  Lib.Ellipsis(exp.name, Styles.ScaleStringLength(short_strings ? 24 : 38)),
+			  Lib.Ellipsis(exp.title, Styles.ScaleStringLength(short_strings ? 24 : 38)),
 			  "</b> <size=", Styles.ScaleInteger(10).ToString(), ">",
-			  Lib.Ellipsis(ExperimentInfo.Situation(filename), Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.name, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
+			  Lib.Ellipsis(ExperimentVariantInfo.Situation(filename), Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.title, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
 			  "</size>"
 			);
 			string exp_tooltip = Lib.BuildString
 			(
-			  exp.name, "\n",
-			  "<color=#aaaaaa>", ExperimentInfo.Situation(filename), "</color>"
+			  exp.title, "\n",
+			  "<color=#aaaaaa>", ExperimentVariantInfo.Situation(filename), "</color>"
 			);
 			double exp_value = Science.Value(filename, sample.size);
 			if (exp_value >= 0.1) exp_tooltip = Lib.BuildString(exp_tooltip, "\n<b>", Lib.HumanReadableScience(exp_value), "</b>");
@@ -176,8 +178,8 @@ namespace KERBALISM
 			p.AddIcon(Icons.toggle_red, "Dump the sample", () =>
 				{
 					Lib.Popup("Warning!",
-						Lib.BuildString("Do you really want to dump ", exp.FullName(filename), "?"),
-						new DialogGUIButton("Dump it", () => drive.samples.Remove(filename)),
+						Lib.BuildString("Do you really want to dump ", exp.SubjectName(filename), "?"),
+						new DialogGUIButton("Dump it", () => drive.Delete_sample(filename)),
 							  new DialogGUIButton("Keep it", () => { }));
 				}
 			);

@@ -22,24 +22,12 @@ namespace KERBALISM
 
 		public Drive(ConfigNode node)
 		{
-			// parse science  files
-			files = new Dictionary<string, File>();
-			if (node.HasNode("files"))
+			// parse drive data
+			driveData = new ExperimentDictionary();
+			if (node.HasNode("driveData"))
 			{
-				foreach (var file_node in node.GetNode("files").GetNodes())
-				{
-					files.Add(DB.From_safe_key(file_node.name), new File(file_node));
-				}
-			}
-
-			// parse science samples
-			samples = new Dictionary<string, Sample>();
-			if (node.HasNode("samples"))
-			{
-				foreach (var sample_node in node.GetNode("samples").GetNodes())
-				{
-					samples.Add(DB.From_safe_key(sample_node.name), new Sample(sample_node));
-				}
+				foreach (var data_node in node.GetNode("driveData").GetNodes())
+					driveData.AddData(data_node);
 			}
 
 			name = Lib.ConfigValue(node, "name", "DRIVE");
@@ -50,6 +38,32 @@ namespace KERBALISM
 			dataCapacity = Lib.ConfigValue(node, "dataCapacity", 100000.0);
 			sampleCapacity = Lib.ConfigValue(node, "sampleCapacity", 1000);
 
+			// Backward compatibility (3.0-alpha-12 and older)
+			if (node.HasNode("files"))
+			{
+				foreach (var file_node in node.GetNode("files").GetNodes())
+				{
+					ExperimentResult expData = new ExperimentResult(node);
+					if (ContainsKey(DB.From_safe_key(node.name)))
+						this[DB.From_safe_key(node.name)].Add(expData);
+					else
+						Add(DB.From_safe_key(node.name), new List<ExperimentResult> { expData });
+
+
+					driveData.AddData(data_node);
+
+					files.Add(DB.From_safe_key(file_node.name), new File(file_node));
+				}
+			}
+			// parse science samples
+			//samples = new Dictionary<string, Sample>();
+			if (node.HasNode("samples"))
+			{
+				foreach (var sample_node in node.GetNode("samples").GetNodes())
+				{
+					samples.Add(DB.From_safe_key(sample_node.name), new Sample(sample_node));
+				}
+			}
 			fileSendFlags = new Dictionary<string, bool>();
 			var fileNames = Lib.ConfigValue(node, "sendFileNames", string.Empty);
 			foreach (var fileName in Lib.Tokenize(fileNames, ','))
@@ -108,8 +122,15 @@ namespace KERBALISM
 			// increase amount of data stored in the file
 			file.size += amount;
 
-			// clamp file size to max amount that can be collected
-			file.size = Math.Min(file.size, Science.Experiment(subject_id).max_amount);
+			// clamp file size to max amount that can be collected and correct the amount
+			if (file.size > Science.Experiment(subject_id).data_max)
+			{
+				amount -= file.size - Science.Experiment(subject_id).data_max;
+				file.size = Science.Experiment(subject_id).data_max;
+			}
+
+			// update the experiment cache
+			Science.AddStoredData(subject_id, amount);
 
 			if (file.size > Science.min_file_size / 3)
 				file.ts = Planetarium.GetUniversalTime();
@@ -164,12 +185,13 @@ namespace KERBALISM
 
 			// increase amount of data stored in the sample,
 			// but clamp file size to max amount that can be collected
-			var maxSize = Science.Experiment(subject_id).max_amount;
+			var maxSize = Science.Experiment(subject_id).data_max;
 			var sizeDelta = maxSize - sample.size;
 			if (sizeDelta >= amount)
 			{
 				sample.size += amount;
 				sample.mass += mass;
+				Science.AddStoredData(subject_id, amount); // update the experiment cache
 			}
 			else
 			{
@@ -177,6 +199,7 @@ namespace KERBALISM
 
 				var f = sizeDelta / amount; // how much of the desired amount can we add
 				sample.mass += mass * f; // add the proportional amount of mass
+				Science.AddStoredData(subject_id, sizeDelta); // update the experiment cache
 			}
 			return true;
 		}
@@ -189,11 +212,33 @@ namespace KERBALISM
 			if (files.TryGetValue(subject_id, out file))
 			{
 				// decrease amount of data stored in the file
-				file.size -= amount;
-				file.ts = Planetarium.GetUniversalTime();
-
+				if (file.size > amount)
+				{
+					file.size -= amount;
+					file.ts = Planetarium.GetUniversalTime();
+				}
 				// remove file if empty
-				if (file.size <= double.Epsilon) files.Remove(subject_id);
+				else
+				{
+					amount = file.size;
+					files.Remove(subject_id);
+				}
+				// update the experiment cache
+				Science.RemoveStoredData(subject_id, amount);
+			}
+		}
+
+		// remove science data
+		public void Delete_file(string subject_id)
+		{
+			// get data
+			File file;
+			if (files.TryGetValue(subject_id, out file))
+			{
+				// update the experiment cache
+				Science.RemoveStoredData(subject_id, file.size);
+				// remove file
+				files.Remove(subject_id);
 			}
 		}
 
@@ -213,6 +258,26 @@ namespace KERBALISM
 				// remove sample if empty
 				if (sample.size <= double.Epsilon) samples.Remove(subject_id);
 
+				// update the experiment cache
+				Science.RemoveStoredData(subject_id, amount);
+
+				return massDelta;
+			}
+			return 0.0;
+		}
+
+		// remove science sample
+		public double Delete_sample(string subject_id)
+		{
+			// get data
+			Sample sample;
+			if (samples.TryGetValue(subject_id, out sample))
+			{
+				double massDelta = sample.size;
+				// update the experiment cache
+				Science.RemoveStoredData(subject_id, sample.size);
+				// remove sample
+				samples.Remove(subject_id);
 				return massDelta;
 			}
 			return 0.0;
@@ -343,16 +408,16 @@ namespace KERBALISM
 			return amount;
 		}
 
-		// return size of data stored in Mb (including samples)
-		public string Size()
-		{
-			var f = FilesSize();
-			var s = SamplesSize();
-			var result = f > double.Epsilon ? Lib.HumanReadableDataSize(f) : "";
-			if (result.Length > 0) result += " ";
-			if (s > 0) result += Lib.HumanReadableSampleSize(s);
-			return result;
-		}
+		//// return size of data stored in Mb (including samples)
+		//public string Size()
+		//{
+		//	var f = FilesSize();
+		//	var s = SamplesSize();
+		//	var result = f > double.Epsilon ? Lib.HumanReadableDataSize(f) : "";
+		//	if (result.Length > 0) result += " ";
+		//	if (s > 0) result += Lib.HumanReadableSampleSize(s);
+		//	return result;
+		//}
 
 		public bool Empty()
 		{
@@ -458,7 +523,11 @@ namespace KERBALISM
 		{
 			foreach (ProtoPartSnapshot p in proto_vessel.protoPartSnapshots)
 			{
-				DB.drives.Remove(p.flightID);
+				if (DB.drives.ContainsKey(p.flightID))
+				{
+					Science.ClearStoredDataInDrive(DB.drives[p.flightID]);
+					DB.drives.Remove(p.flightID);
+				}
 			}
 		}
 
@@ -478,7 +547,11 @@ namespace KERBALISM
 		public static void Purge(Vessel vessel)
 		{
 			foreach (var id in GetDriveParts(vessel).Keys)
+			{
+				Science.ClearStoredDataInDrive(DB.drives[id]);
 				DB.drives.Remove(id);
+			}
+
 		}
 
 		public static Dictionary<uint, Drive> GetDriveParts(Vessel vessel)
@@ -489,7 +562,7 @@ namespace KERBALISM
 
 			result = new Dictionary<uint, Drive>();
 
-			if(vessel.loaded)
+			if (vessel.loaded)
 			{
 				foreach (var hd in vessel.FindPartModulesImplementing<HardDrive>())
 				{
@@ -513,7 +586,7 @@ namespace KERBALISM
 		public static List<Drive> GetDrives(Vessel vessel, bool include_private = false)
 		{
 			List<Drive> result = new List<Drive>();
-			foreach(var d in GetDriveParts(vessel).Values)
+			foreach (var d in GetDriveParts(vessel).Values)
 			{
 				if (!d.is_private || include_private)
 					result.Add(d);
@@ -548,34 +621,71 @@ namespace KERBALISM
 			}
 		}
 
-		public static Drive FileDrive(Vessel vessel, double size = 0)
+		/// <summary>
+		/// return the drive where a subject_id file/sample exists already and is complete/can be completed
+		/// if the file can't be completed (drive full) or doesn't exists, return the drive with the most available space.
+		/// "out dataSampled" is the sum of all data stored on all drives of the vessel for this subject_id
+		/// </summary>
+		public static Drive GetDriveForSubject(Vessel vessel, string subject_id, bool isFile, out double dataSampled)
 		{
 			Drive result = null;
+			dataSampled = 0;
+			double subjectMaxAmount = Science.Experiment(subject_id).data_max;
+
 			foreach (var drive in GetDrives(vessel))
 			{
+				if (subjectMaxAmount > double.Epsilon)
+				{
+					if (isFile)
+					{
+						if (drive.files.ContainsKey(subject_id))
+						{
+							dataSampled += drive.files[subject_id].size;
+							if (dataSampled < subjectMaxAmount)
+							{
+								// if there is space left on the drive, the current file can be completed
+								// else let's continue to find another drive to complete the data in another file
+								if (drive.FileCapacityAvailable() > 0) return drive;
+							}
+							else
+							{
+								// the file exists and is complete
+								return drive;
+							}
+						}
+					}
+					else
+					{
+						if (drive.samples.ContainsKey(subject_id))
+						{
+							dataSampled += drive.samples[subject_id].size;
+							if (dataSampled < subjectMaxAmount)
+							{
+								// if slots are available or the current slot is not full, the current sample can be completed
+								// else let's continue to find another drive to complete the data in another sample
+								if (drive.SampleCapacityAvailable() > 0 || dataSampled % 1024 > 0) return drive;
+							}
+							else
+							{
+								// the sample exists and is complete
+								return drive;
+							}
+						}
+					}
+				}
+
 				if (result == null)
 				{
 					result = drive;
-					if (size > double.Epsilon && result.FileCapacityAvailable() >= size)
-						return result;
 					continue;
 				}
 
-				if (size > double.Epsilon && drive.FileCapacityAvailable() >= size)
-				{
-					return drive;
-				}
-
-				// if we're not looking for a minimum capacity, look for the biggest drive
-				if (drive.dataCapacity > result.dataCapacity)
+				if (isFile ?
+					drive.FileCapacityAvailable() > result.FileCapacityAvailable() :
+					drive.SampleCapacityAvailable() > result.SampleCapacityAvailable())
 				{
 					result = drive;
 				}
-			}
-			if (result == null)
-			{
-				// vessel has no drive.
-				return new Drive("Broken", 0, 0);
 			}
 			return result;
 		}
@@ -597,11 +707,6 @@ namespace KERBALISM
 				if (available > result.SampleCapacityAvailable(filename))
 					result = drive;
 			}
-			if (result == null)
-			{
-				// vessel has no drive.
-				return new Drive("Broken", 0, 0);
-			}
 			return result;
 		}
 
@@ -612,8 +717,7 @@ namespace KERBALISM
 		public int sampleCapacity;
 		public string name = String.Empty;
 		public bool is_private = false;
+
 	}
-
-
 } // KERBALISM
 

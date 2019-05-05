@@ -354,6 +354,7 @@ namespace KERBALISM
 				}
 
 				// type-specific hacks
+				// TODO : we will need to get the ExperimentProcess "manually" here
 				switch (reliability.type)
 				{
 					case "ProcessController":

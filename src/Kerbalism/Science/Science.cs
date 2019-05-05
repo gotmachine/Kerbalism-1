@@ -57,6 +57,94 @@ namespace KERBALISM
 			// - this avoid losing science if the buffer reach threshold during a scene change
 			if (HighLogic.CurrentGame.Mode != Game.Modes.SANDBOX && ResearchAndDevelopment.Instance == null) return;
 
+
+			/*
+			- In experiment part module, create a "ExperimentProcess" object that contains :
+				- module state related bools
+				- issue string
+				- remainingSampleMass
+				- privateHdId
+				- a reference to the ExperimentInfo object
+				- a reference to the ExperimentResult object (can be null)
+				- double data_pending
+				- double data_consumed
+
+			- In laboratory part module, create a "SampleProcess" object that contains :
+				- lab enabled bool
+				- a reference to the ExperimentInfo object
+				- a reference to the sample ExperimentResult object (can be null)
+				- a reference to the file ExperimentResult object (can be null)
+				- double data_pending
+				- double data_consumed
+
+			- store these objects in two new dictionaries in the VesselData object accessible and persisted in DB.vessels 
+
+			- on Science.Update :
+
+				- foreach ExperimentProcess :
+					- check the situation, update the issue string
+					- if situation has changed, search for the corresponding ExperimentResult in drives
+					- if manual mode, check if the size of all files for this ExperimentInfo is a multiple of the max_amount
+					- if smart mode, check the science value left
+					- check EC and resources availability -> how to clamp data production to actual resource availability ?
+					- check that only one ExperimentProcess is running for the same ExperimentInfo
+					- if all is OK
+						- set ExperimentProcess.data_pending to the max potential data amount
+						- add the ExperimentProcess to a "exp_process_pending" list
+
+				- foreach SampleProcess :
+					- check lab resources availability / crew conditions, update the issue string
+					- if OK :
+						- get the ExperimentResult sample to be processed
+						- add the potential data amount to SampleProcess.data_pending
+						- add the SampleProcess to a "sample_process_pending" list
+
+				- get transmit_capacity, the data amount we can transmit
+
+				- from the two pending lists (samples should be first ?)
+					- get the one we want to transmit
+					- substract the amount transmitted from the ExperimentProcess/SampleProcess.data_pending
+					- substract the amount transmitted from transmit_capacity
+					- add the amount transmitted to ExperimentProcess/SampleProcess.data_consumed
+					- if the ExperimentResult is null, create it
+					- update the ExperimentResult.transmit_buffer (formerly file.buff)
+					- credit the science if the transmit_buffer has reached the buffer_science_value
+					- if the max science value has been credited
+						- if manual mode, set ExperimentProcess.running = false
+						- delete the ExperimentResult object on the drive and set data_pending = 0
+					- if there is still some transmit_capacity left, repeat with the next ExperimentProcess/SampleProcess
+
+				- for each SampleProcess in sample_process_pending :
+					- if smart mode, clamp data_pending to the data amount needed to get all science points
+					- if manual mode :
+						- search other drives for the same subject_id
+						- clamp data pending + all the data already present for this subject_id to the next greater multiple of ExperimentInfo.data_max
+					- if ExperimentResult is null find a drive and create it.
+					- if space available on drive > data_pending,
+						- data_consumed += data_pending;
+						- add data_pending to the ExperimentResult
+					- else :
+						- store what is possible on this drive, keep track of data_consumed
+						- find another drive, create a new file, repeat until data_pending = 0 or all drives are full.
+					- substract data_consumed from the sample ExperimentResult.size, if size = 0 delete the ExperimentResult from the drive
+					- consume EC according to the data_consumed/max data produced ratio
+
+				- for each ExperimentProcess in exp_process_pending :
+					- if smart mode, clamp data_pending to the data amount needed to get all science points
+					- if manual mode :
+						- search other drives for the same subject_id
+						- clamp data pending + all the data already present for this subject_id to the next greater multiple of ExperimentInfo.data_max
+					- if ExperimentResult is null find a drive and create it.
+					- if space available on drive > data_pending,
+						- data_consumed += data_pending;
+						- ExperimentResult.size += data_pending
+						- remove some ExperimentProcess.remainingSampleMass and add it to the ExperimentResult.mass
+					- else :
+						- store what is possible on this drive, keep track of data_consumed
+						- find another drive, create a new file, repeat until data_pending = 0 or all drives are full.
+					- consume EC and resources according to the data_consumed/max data produced ratio
+			*/
+
 			// get connection info
 			ConnectionInfo conn = vi.connection;
 			if (conn == null || String.IsNullOrEmpty(vi.transmitting)) return;
@@ -121,7 +209,7 @@ namespace KERBALISM
 				if (file.size <= double.Epsilon)
 				{
 					// remove the file
-					drive.files.Remove(exp_filename);
+					drive.Delete_file(exp_filename);
 				}
 			}
 		}
@@ -156,7 +244,7 @@ namespace KERBALISM
 		// credit science for the experiment subject specified
 		public static float Credit(string subject_id, double size, bool transmitted, ProtoVessel pv)
 		{
-			var credits = Value(subject_id, size);
+			var credits = ExperimentInfo.Value(subject_id, size);
 
 			// credit the science
 			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
@@ -183,51 +271,6 @@ namespace KERBALISM
 			return credits;
 		}
 
-
-		// return value of some data about a subject, in science credits
-		public static float Value(string subject_id, double size = 0)
-		{
-			if(size < double.Epsilon)
-			{
-				var exp = Science.Experiment(subject_id);
-				size = exp.max_amount;
-			}
-
-			// get science subject
-			// - if null, we are in sandbox mode
-			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
-			if (subject == null) return 0.0f;
-
-			// get science value
-			// - the stock system 'degrade' science value after each credit, we don't
-			double R = ResearchAndDevelopment.GetReferenceDataValue((float)size, subject);
-
-			double S = subject.science;
-			double C = subject.scienceCap;
-			double credits = Math.Max(Math.Min(S + Math.Min(R, C), C) - S, 0.0);
-
-			credits *= HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
-
-			return (float)credits;
-		}
-
-		// return total value of some data about a subject, in science credits
-		public static float TotalValue(string subject_id)
-		{
-			var exp = Science.Experiment(subject_id);
-			var size = exp.max_amount;
-
-			// get science subject
-			// - if null, we are in sandbox mode
-			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
-			if (subject == null) return 0.0f;
-
-			double credits = ResearchAndDevelopment.GetReferenceDataValue((float)size, subject);
-			credits *= HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
-
-			return (float)credits;
-		}
-
 		// return module acting as container of an experiment
 		public static IScienceDataContainer Container(Part p, string experiment_id)
 		{
@@ -244,17 +287,91 @@ namespace KERBALISM
 		}
 
 
-		// return info about an experiment
-		public static ExperimentInfo Experiment(string subject_id)
+		/// <summary>
+		/// return the ExperimentInfo object corresponding to a subject_id, formatted as "experiment_id@situation"
+		/// </summary>
+		public static ExperimentVariantInfo GetExperimentInfoFromSubject(string subject_id)
 		{
-			ExperimentInfo info;
-			if (!experiments.TryGetValue(subject_id, out info))
+			ExperimentVariantInfo info;
+			if (!experiments.TryGetValue(ExperimentInfo.GetExperimentId(subject_id), out info))
 			{
-				info = new ExperimentInfo(subject_id);
-				experiments.Add(subject_id, info);
+				Lib.Log("ERROR: No ExperimentInfo found for subject " + subject_id);
+				return null;
 			}
 			return info;
 		}
+
+		/// <summary>
+		/// return the ExperimentInfo object corresponding to a "experiment_id". Faster than GetExperiementInfoFromSubject().
+		/// </summary>
+		public static ExperimentVariantInfo GetExperimentInfo(string experiment_id)
+		{
+			ExperimentVariantInfo info;
+			if (!experiments.TryGetValue(experiment_id, out info))
+			{
+				Lib.Log("ERROR: No ExperimentInfo found for id " + experiment_id);
+				return null;
+			}
+			return info;
+		}
+
+		/// <summary>
+		/// return the ExperimentInfo object corresponding to a "experiment_id". Faster than GetExperiementInfoFromSubject().
+		/// </summary>
+		public static bool ExperimentInfoExists(string experiment_variant_id)
+		{
+			return experiments.ContainsKey(experiment_id);
+		}
+
+		public static bool ExperimentInfo
+
+
+		#region Stored data cache
+
+		// Rebuild the stored experiements data cache
+		public static void UpdateStoredDataCache()
+		{
+			storedData.Clear();
+
+			foreach (var drive in DB.drives.Values)
+			{
+				foreach (var file in drive.files) AddStoredData(file.Key, file.Value.size);
+				foreach (var sample in drive.samples) AddStoredData(sample.Key, sample.Value.size);
+			}
+		}
+
+		// Remove all data stored in a drive from the experiements data cache
+		public static void ClearStoredDataInDrive(Drive drive)
+		{
+			foreach (string subject_id in drive.files.Keys) ClearStoredData(subject_id);
+			foreach (string subject_id in drive.samples.Keys) ClearStoredData(subject_id);
+		}
+
+		// Get stored data amount in all vessels
+		public static double GetStoredData(string subject_id)
+		{ return storedData.ContainsKey(subject_id) ? storedData[subject_id] : 0; }
+
+		// Add data amount to the stored experiements data cache
+		public static void AddStoredData(string subject_id, double amount)
+		{
+			if (storedData.ContainsKey(subject_id))
+				storedData[subject_id] += amount;
+			else
+				storedData.Add(subject_id, amount);
+		}
+
+		// Remove data amount to the stored experiements data cache
+		public static void RemoveStoredData(string subject_id, double amount)
+		{ if (storedData.ContainsKey(subject_id)) storedData[subject_id] = Math.Max(storedData[subject_id] - amount, 0); }
+
+		// Remove all data for the experiement subject from the stored experiements data cache
+		public static void ClearStoredData(string subject_id)
+		{ storedData.Remove(subject_id); }
+
+		#endregion
+
+		#region Experiments utils
+		// TODO : move those elsewhere. maybe ExperimentInfo ?
 
 		public static string Generate_subject_id(string experiment_id, Vessel v)
 		{
@@ -577,37 +694,40 @@ namespace KERBALISM
 			return result;
 		}
 
-		public static void RegisterSampleMass(string experiment_id, double sampleMass)
-		{
-			// get experiment id out of subject id
-			int i = experiment_id.IndexOf('@');
-			var id = i > 0 ? experiment_id.Substring(0, i) : experiment_id;
+		#endregion
 
-			if (sampleMasses.ContainsKey(id))
-			{
-				if (Math.Abs(sampleMasses[id] - sampleMass) > double.Epsilon)
-					Lib.Log("Science Warning: different sample masses for Experiment " + id + " defined.");
-			}
-			else
-			{
-				sampleMasses.Add(id, sampleMass);
-				Lib.Log("Science: registered sample mass for " + id + ": " + sampleMass.ToString("F3"));
-			}
-		}
+		//public static void RegisterSampleMass(string experiment_id, double sampleMass)
+		//{
+		//	// get experiment id out of subject id
+		//	int i = experiment_id.IndexOf('@');
+		//	var id = i > 0 ? experiment_id.Substring(0, i) : experiment_id;
 
-		public static double GetSampleMass(string experiment_id)
-		{
-			// get experiment id out of subject id
-			int i = experiment_id.IndexOf('@');
-			var id = i > 0 ? experiment_id.Substring(0, i) : experiment_id;
+		//	if (sampleMasses.ContainsKey(id))
+		//	{
+		//		if (Math.Abs(sampleMasses[id] - sampleMass) > double.Epsilon)
+		//			Lib.Log("Science Warning: different sample masses for Experiment " + id + " defined.");
+		//	}
+		//	else
+		//	{
+		//		sampleMasses.Add(id, sampleMass);
+		//		Lib.Log("Science: registered sample mass for " + id + ": " + sampleMass.ToString("F3"));
+		//	}
+		//}
 
-			if (!sampleMasses.ContainsKey(id)) return 0;
-			return sampleMasses[id];
-		}
+		//public static double GetSampleMass(string experiment_id)
+		//{
+		//	// get experiment id out of subject id
+		//	int i = experiment_id.IndexOf('@');
+		//	var id = i > 0 ? experiment_id.Substring(0, i) : experiment_id;
 
-		// experiment info cache
-		static readonly Dictionary<string, ExperimentInfo> experiments = new Dictionary<string, ExperimentInfo>();
-		readonly static Dictionary<string, double> sampleMasses = new Dictionary<string, double>();
+		//	if (!sampleMasses.ContainsKey(id)) return 0;
+		//	return sampleMasses[id];
+		//}
+
+		// experiment info 
+		static readonly Dictionary<string, ExperimentVariantInfo> experiments = new Dictionary<string, ExperimentVariantInfo>();
+		//static readonly Dictionary<string, double> sampleMasses = new Dictionary<string, double>();
+		static readonly Dictionary<string, double> storedData = new Dictionary<string, double>();
 
 	}
 

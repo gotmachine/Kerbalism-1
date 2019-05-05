@@ -67,7 +67,7 @@ namespace KERBALISM
 					Science.Generate_subject(experimentType, vessel);
 					var subject_id = Science.Generate_subject_id(experimentType, vessel);
 					var exp = Science.Experiment(subject_id);
-					double size = exp.max_amount * coverage_delta / 100.0; // coverage is 0-100%
+					double size = exp.data_max * coverage_delta / 100.0; // coverage is 0-100%
 
 					size += warp_buffer;
 
@@ -224,7 +224,7 @@ namespace KERBALISM
 					Science.Generate_subject(kerbalismScansat.experimentType, vessel);
 					var subject_id = Science.Generate_subject_id(kerbalismScansat.experimentType, vessel);
 					var exp = Science.Experiment(subject_id);
-					double size = exp.max_amount * coverage_delta / 100.0; // coverage is 0-100%
+					double size = exp.data_max * coverage_delta / 100.0; // coverage is 0-100%
 					size += warp_buffer;
 
 					if (size > double.Epsilon)

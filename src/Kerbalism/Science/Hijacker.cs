@@ -46,18 +46,16 @@ namespace KERBALISM
 
 				// record data
 				bool recorded = false;
+				var experimentInfo = Science.GetExperimentInfoFromSubject(data.subjectID);
 				if (!meta.is_sample)
 				{
-					Drive drive = Drive.FileDrive(meta.vessel, data.dataAmount);
+					Drive drive = Drive.GetBestFileDrive(meta.vessel, data.dataAmount);
 					recorded = drive.Record_file(data.subjectID, data.dataAmount);
 				}
 				else
 				{
 					Drive drive = Drive.SampleDrive(meta.vessel, data.dataAmount, data.subjectID);
-
-					var experimentInfo = Science.Experiment(data.subjectID);
-					var sampleMass = Science.GetSampleMass(data.subjectID);
-					var mass = sampleMass / experimentInfo.max_amount * data.dataAmount;
+					var mass = experimentInfo.sample_mass / experimentInfo.data_max * data.dataAmount;
 
 					recorded = drive.Record_sample(data.subjectID, data.dataAmount, mass);
 				}
@@ -74,17 +72,15 @@ namespace KERBALISM
 					page.OnDiscardData(data);
 
 					// inform the user
-					var exp = Science.Experiment(data.subjectID);
 					Message.Post(
-						Lib.BuildString("<b>", exp.FullName(data.subjectID), "</b> recorded"),
+						Lib.BuildString("<b>", experimentInfo.SubjectName(data.subjectID), "</b> recorded"),
 						!meta.is_rerunnable ? Localizer.Format("#KERBALISM_Science_inoperable") : string.Empty
 					);
 				}
 				else
 				{
-					var exp = Science.Experiment(data.subjectID);
 					Message.Post(
-						Lib.Color("red", Lib.BuildString(exp.FullName(data.subjectID), " can not be stored")),
+						Lib.Color("red", Lib.BuildString(experimentInfo.SubjectName(data.subjectID), " can not be stored")),
 						"Not enough space on hard drive"
 					);
 				}
@@ -169,19 +165,16 @@ namespace KERBALISM
 
 			// record data in the drive
 			bool recorded = false;
+			var experimentInfo = Science.GetExperimentInfoFromSubject(data.subjectID);
 			if (!meta.is_sample)
 			{
-				Drive drive = Drive.FileDrive(meta.vessel, data.dataAmount);
+				Drive drive = Drive.GetBestFileDrive(meta.vessel, data.dataAmount);
 				recorded = drive.Record_file(data.subjectID, data.dataAmount);
 			}
 			else
 			{
 				Drive drive = Drive.SampleDrive(meta.vessel, data.dataAmount, data.subjectID);
-
-				var experimentInfo = Science.Experiment(data.subjectID);
-				var sampleMass = Science.GetSampleMass(data.subjectID);
-				var mass = sampleMass / experimentInfo.max_amount * data.dataAmount;
-
+				var mass = experimentInfo.sample_mass / experimentInfo.data_max * data.dataAmount;
 				recorded = drive.Record_sample(data.subjectID, data.dataAmount, mass);
 			}
 
@@ -200,18 +193,16 @@ namespace KERBALISM
 				// dismiss the dialog and popups
 				Dismiss(data);
 
-				var exp = Science.Experiment(data.subjectID);
 				// inform the user
 				Message.Post(
-					Lib.BuildString("<b>", exp.FullName(data.subjectID), "</b> recorded"),
+					Lib.BuildString("<b>", experimentInfo.SubjectName(data.subjectID), "</b> recorded"),
 					!meta.is_rerunnable ? Localizer.Format("#KERBALISM_Science_inoperable") : string.Empty
 				);
 			}
 			else
 			{
-				var exp = Science.Experiment(data.subjectID);
 				Message.Post(
-					Lib.Color("red", Lib.BuildString(exp.FullName(data.subjectID), " can not be stored")),
+					Lib.Color("red", Lib.BuildString(experimentInfo.SubjectName(data.subjectID), " can not be stored")),
 					"Not enough space on hard drive"
 				);
 			}
@@ -250,7 +241,7 @@ namespace KERBALISM
 			vessel = part.vessel;
 
 			// get the container module storing the data
-			container = Science.Container(part, Science.Experiment(data.subjectID).id);
+			container = Science.Container(part, ExperimentVariantInfo.GetExperimentId(data.subjectID));
 
 			// get the stock experiment module storing the data (if that's the case)
 			experiment = container != null ? container as ModuleScienceExperiment : null;

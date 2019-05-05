@@ -729,6 +729,24 @@ namespace KERBALISM
 			return BuildString(size.ToString("F2"), " TB");
 		}
 
+		///<summary> Format data utilization (x/x), the size parameter is in MB </summary>
+		public static string HumanReadableDataSize(double size, double capacity)
+		{
+			capacity *= 131072.0; //< bits
+			if (capacity < 1.0) return "none";
+			if (capacity <= 32.0) return BuildString((size * 131072.0).ToString("F0"), "/", capacity.ToString("F0"), " b");
+			capacity *= 8; //< to bytes
+			if (capacity < 1024.0) return BuildString((size * 1048576.0).ToString("F0"), "/", capacity.ToString("F0"), " B");
+			capacity /= 1024.0;
+			if (capacity < 1024.0) return BuildString((size * 1024).ToString("F2"), "/", capacity.ToString("F2"), " kB");
+			capacity /= 1024.0;
+			if (capacity < 1024.0) return BuildString(size.ToString("F2"), "/", capacity.ToString("F2"), " MB");
+			capacity /= 1024.0;
+			if (capacity < 1024.0) return BuildString((size / 1024.0).ToString("F2"), "/", capacity.ToString("F2"), " GB");
+			capacity /= 1024.0;
+			return BuildString((size / 1048576.0).ToString("F2"), "/", capacity.ToString("F2"), " TB");
+		}
+
 		///<summary> Format data rate, the rate parameter is in Mb/s </summary>
 		public static string HumanReadableDataRate(double rate)
 		{
@@ -1607,7 +1625,7 @@ namespace KERBALISM
 								break;
 							}
 						}
-						drive.files.Remove(filename);
+						drive.Delete_file(filename);
 						break;
 					}
 				}

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 
 
@@ -16,7 +17,11 @@ namespace KERBALISM
 
 		[KSPField(isPersistant = true)] public uint hdId = 0;
 
-		[KSPField(guiActive = true, guiName = "Capacity", guiActiveEditor = true)] public string Capacity;
+		[KSPField(guiActive = false, guiName = "Science storage", guiActiveEditor = true)] public string capacity;
+
+		[KSPField(guiName = "Experiments mode", guiActiveEditor = false, guiActive = true, isPersistant = false),
+		UI_Toggle(controlEnabled = true, disabledText = "Manual", enabledText = "Smart", invertButton = false, scene = UI_Scene.All)]
+		public bool smartScience = true;
 
 		private Drive drive;
 		private double totalSampleMass;
@@ -39,7 +44,34 @@ namespace KERBALISM
 			if(vessel != null) Cache.RemoveVesselObjectsCache(vessel, "drives");
 
 			drive.is_private |= experiment_id.Length > 0;
-			UpdateCapacity();
+			UpdateSampleMass();
+
+			if (Lib.IsFlight())
+			{
+				if (PreferencesScience.Instance.smartScience)
+				{
+					Fields["smartScience"].guiActive = true;
+					Fields["smartScience"].guiActiveEditor = false;
+					smartScience = DB.Vessel(vessel).cfg_smartscience;
+					Fields["smartScience"].uiControlFlight.onFieldChanged = SwitchSmartScience;
+				}
+				else
+				{
+					Fields["smartScience"].guiActive = false;
+					smartScience = false;
+					DB.Vessel(vessel).cfg_smartscience = false;
+				}
+			}
+
+		}
+
+		private void SwitchSmartScience(BaseField arg1, object arg2)
+		{
+			// stop all experiements when switching to manual mode
+			if (!smartScience) vessel.FindPartModulesImplementing<Experiment>().ForEach(ex => ex.Stop(null));
+			// propagate to all other toggles on the vessel and to the config value
+			vessel.FindPartModulesImplementing<HardDrive>().ForEach(hd => hd.smartScience = smartScience);
+			DB.Vessel(vessel).cfg_smartscience = smartScience;
 		}
 
 		public override void OnLoad(ConfigNode node)
@@ -57,21 +89,22 @@ namespace KERBALISM
 		{
 			this.drive = drive;
 			drive.is_private |= experiment_id.Length > 0;
-			UpdateCapacity();
+			UpdateSampleMass();
 		}
 
 		public void FixedUpdate()
 		{
-			UpdateCapacity();
+			UpdateSampleMass();
 		}
 
 		public void Update()
 		{
+			capacity = GetStorageInfo();
 			if (Lib.IsFlight())
 			{
 				// show DATA UI button, with size info
-				Events["ToggleUI"].guiName = Lib.StatusToggle("Data", drive.Empty() ? "empty" : drive.Size());
-				Events["ToggleUI"].active = !IsPrivate();
+				Events["ToggleUI"].guiName = Lib.StatusToggle("Science", capacity);
+				Events["ToggleUI"].active = true; // !IsPrivate();
 
 				// show TakeData eva action button, if there is something to take
 				Events["TakeData"].active = !drive.Empty();
@@ -96,41 +129,83 @@ namespace KERBALISM
 			return drive.is_private;
 		}
 
-		private void UpdateCapacity()
+		private void UpdateSampleMass()
 		{
 			double mass = 0;
 			foreach (var sample in drive.samples.Values) mass += sample.mass;
 			totalSampleMass = mass;
+		}
 
-			if (dataCapacity < 0 || sampleCapacity < 0 || IsPrivate())
-			{
-				Fields["Capacity"].guiActive = false;
-				Fields["Capacity"].guiActiveEditor = false;
-				return;
-			}
-
-			double availableDataCapacity = dataCapacity;
-			int availableSlots = sampleCapacity;
+		public string GetStorageInfo()
+		{
+			StringBuilder capacitySB = new StringBuilder();
 
 			if (Lib.IsFlight())
 			{
-				availableDataCapacity = drive.FileCapacityAvailable();
-				availableSlots = Lib.SampleSizeToSlots(drive.SampleCapacityAvailable());
-			}
+				if (dataCapacity > 0)
+				{
+					capacitySB.Append(Lib.HumanReadableDataSize(drive.FilesSize(), dataCapacity));
+				}
+				else if (dataCapacity == -1)
+				{
+					capacitySB.Append(Lib.HumanReadableDataSize(drive.FilesSize()));
+					capacitySB.Append(" used");
+				}
 
-			Capacity = string.Empty;
-			if(availableDataCapacity > double.Epsilon)
-				Capacity = Lib.HumanReadableDataSize(availableDataCapacity);
-			if(availableSlots > 0)
-			{
-				if (Capacity.Length > 0) Capacity += " ";
-				Capacity += Lib.HumanReadableSampleSize(availableSlots);
-			}
+				if (sampleCapacity != 0)
+				{
+					if (dataCapacity != 0)
+						capacitySB.Append(", ");
 
-			if(Lib.IsFlight() && totalSampleMass > double.Epsilon)
-			{
-				Capacity += " " + Lib.HumanReadableMass(totalSampleMass);
+					capacitySB.Append(drive.SamplesSize());
+					if (sampleCapacity > 0)
+					{
+						capacitySB.Append("/");
+						capacitySB.Append(sampleCapacity);
+						capacitySB.Append(" slot");
+					}
+					else
+					{
+						capacitySB.Append(" slot used");
+					}
+					if (drive.SamplesSize() > 0)
+					{
+						double totalMass = 0;
+						foreach (var sample in drive.samples.Values) totalMass += sample.mass;
+						capacitySB.Append(" (");
+						capacitySB.Append(Lib.HumanReadableMass(totalMass));
+						capacitySB.Append(")");
+					}
+				}
 			}
+			else
+			{
+				if (dataCapacity != 0)
+				{
+					capacitySB.Append("data ");
+					if (dataCapacity > 0)
+						capacitySB.Append(Lib.HumanReadableDataSize(dataCapacity));
+					else if (dataCapacity == -1)
+						capacitySB.Append("infinite");
+				}
+
+				if (sampleCapacity != 0)
+				{
+					if (dataCapacity != 0)
+						capacitySB.Append(", ");
+
+					capacitySB.Append("sample ");
+					if (sampleCapacity > 0)
+					{
+						capacitySB.Append(sampleCapacity);
+						capacitySB.Append(" slot");
+					}
+					else if (sampleCapacity == -1)
+						capacitySB.Append("infinite");
+				}
+
+			}
+			return capacitySB.ToStringAndRelease();
 		}
 
 		public Drive GetDrive()
@@ -236,7 +311,7 @@ namespace KERBALISM
 			{
 				var experimentInfo = Science.Experiment(data.subjectID);
 				var sampleMass = Science.GetSampleMass(data.subjectID);
-				var mass = sampleMass / experimentInfo.max_amount * data.dataAmount;
+				var mass = sampleMass / experimentInfo.data_max * data.dataAmount;
 
 				result = drive.Record_sample(data.subjectID, data.dataAmount, mass);
 			}

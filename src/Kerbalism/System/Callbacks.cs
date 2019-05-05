@@ -353,6 +353,7 @@ namespace KERBALISM
 				return;
 
 			Cache.PurgeObjects(p.vessel);
+			if (DB.drives.ContainsKey(p.flightID)) Science.ClearStoredDataInDrive(DB.drives[p.flightID]);
 			DB.drives.Remove(p.flightID);
 		}
 

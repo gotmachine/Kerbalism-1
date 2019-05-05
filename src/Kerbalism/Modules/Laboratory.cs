@@ -69,7 +69,7 @@ namespace KERBALISM
 			if (hardDrive != null) drive = hardDrive.GetDrive();
 			else
 			{
-				drive = Drive.FileDrive(vessel);
+				drive = Drive.GetBestFileDrive(vessel);
 			}
 		}
 
@@ -276,7 +276,7 @@ namespace KERBALISM
 				amount = Math.Min(amount, sample.size);
 			}
 
-			Drive fileDrive = Drive.FileDrive(v, amount);
+			Drive fileDrive = Drive.GetBestFileDrive(v, amount);
 
 			if(sample != null)
 			{

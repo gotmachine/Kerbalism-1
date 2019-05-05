@@ -5,6 +5,17 @@ using UnityEngine;
 using KSP.Localization;
 using System.Collections;
 
+// TODO fix multiple experiements can run at once (and check the whole Toggle() code, things seems to be quirky around there)
+// TODO fix the button text stopped/waiting
+// TODO see what we can do about the "time remaining" incoherencies (take into account science remaining when smart mode is ON)
+// TODO check that experiements are completed up to the last bit, i'm pretty sure this is fucked since I fiddled with drives
+// TODO update SampleDrive() like GetbestFileDrive()
+
+// TODO Get ride of dataSampled, it makes no sense to have it since it has to become a duplicate of the file/sample.size.
+// Instead keep a direct reference to the size/sample.
+
+	// TODO Move sample_mass, requires,  to the experiement definition
+	// 
 
 namespace KERBALISM
 {
@@ -34,19 +45,25 @@ namespace KERBALISM
 		[KSPField] public string anim_loop = string.Empty; // deploy animation
 		[KSPField] public bool anim_loop_reverse = false;
 
-
 		// persistence
 		[KSPField(isPersistant = true)] public bool recording;
 		[KSPField(isPersistant = true)] public string issue = string.Empty;
 		[KSPField(isPersistant = true)] public string last_subject_id = string.Empty;
 		[KSPField(isPersistant = true)] public bool didPrepare = false;
-		[KSPField(isPersistant = true)] public double dataSampled = 0.0;
+		[KSPField(isPersistant = true)] public double dataSampled2 = 0.0;
 		[KSPField(isPersistant = true)] public bool shrouded = false;
 		[KSPField(isPersistant = true)] public double remainingSampleMass = 0;
 		[KSPField(isPersistant = true)] public bool broken = false;
 		[KSPField(isPersistant = true)] public double scienceValue = 0;
 		[KSPField(isPersistant = true)] public bool forcedRun = false;
 		[KSPField(isPersistant = true)] public uint privateHdId = 0;
+
+		// reference to the current data on the drive, only used when loaded
+		// can be a "Sample", a "File" or null if no data exists, be extra carefull with this
+		private Sample currentSample = null;
+		private File currentFile = null;
+		private Drive currentDrive = null;
+		//private double lastDataSampled = 0;
 
 		private static readonly string insufficient_storage = "insufficient storage";
 
@@ -68,10 +85,10 @@ namespace KERBALISM
 			STOPPED = 0, WAITING, RUNNING, ISSUE
 		}
 
-		public static State GetState(double scienceValue, string issue, bool recording, bool forcedRun)
+		public static State GetState(Vessel v, double scienceValue, string issue, bool recording, bool forcedRun)
 		{
-			bool hasValue = scienceValue >= 0.1;
-			bool smartScience = PreferencesScience.Instance.smartScience;
+			bool hasValue = scienceValue > double.Epsilon;
+			bool smartScience = DB.Vessel(v).cfg_smartscience;
 
 			if (issue.Length > 0) return State.ISSUE;
 			if (!recording) return State.STOPPED;
@@ -136,6 +153,14 @@ namespace KERBALISM
 				if (hd.experiment_id == experiment_id) privateHdId = part.flightID;
 			}
 
+			if (Lib.IsFlight())
+			{
+				currentDrive = GetDriveAndData(this, last_subject_id, vessel, privateHdId, out currentFile, out currentSample);
+				lastDataSampled = GetDataSampled();
+			}
+				
+			//if (Lib.IsFlight()) dataSampled = GetDataSampledInDrive(this, last_subject_id, vessel, privateHdId);
+
 			Events["Toggle"].guiActiveUncommand = true;
 			Events["Toggle"].externalToEVAOnly = true;
 			Events["Toggle"].requireFullControl = false;
@@ -149,10 +174,10 @@ namespace KERBALISM
 			Events["Reset"].requireFullControl = false;
 		}
 
-		public static bool Done(ExperimentInfo exp, double dataSampled)
+		public static bool Done(ExperimentVariantInfo exp, double dataSampled)
 		{
-			if (exp.max_amount < double.Epsilon) return false;
-			return dataSampled / exp.max_amount > 0.999;
+			if (exp.data_max < double.Epsilon) return false;
+			return dataSampled >= exp.data_max;
 		}
 
 		public void Update()
@@ -171,19 +196,26 @@ namespace KERBALISM
 				// do nothing if vessel is invalid
 				if (!vi.is_valid) return;
 
-				var sampleSize = exp.max_amount;
-				var eta = data_rate < double.Epsilon || Done(exp, dataSampled) ? " done" : " " + Lib.HumanReadableCountdown((sampleSize - dataSampled) / data_rate);
+				var sampleSize = exp.data_max;
+				var dataSampled = GetDataSampled();
+				var eta = data_rate < double.Epsilon || Done(exp, dataSampled) ? " (done)" : " " + Lib.HumanReadableCountdown((sampleSize - dataSampled) / data_rate); //TODO  account for remaining science value, not only size 
 
 				// update ui
 				var title = Lib.Ellipsis(exp.name, Styles.ScaleStringLength(24));
-				if (scienceValue > 0.1) title += " •<b>" + scienceValue.ToString("F1") + "</b>";
 
-				string statusString = string.Empty;
+				var valueTotal = Science.TotalValue(last_subject_id);
+				var valueDone = valueTotal - scienceValue;
+				bool done = scienceValue < double.Epsilon;
+				string statusString = Lib.Color(done ? "green" : "#00ffffff", Lib.BuildString("•", valueDone.ToString("F1"), "/", valueTotal.ToString("F1"), " "), true);
+
 				switch (state) {
-					case State.ISSUE: statusString = Lib.Color("yellow", issue); break;
-					case State.RUNNING: statusString = Lib.HumanReadablePerc(dataSampled / sampleSize) + eta; break;
-					case State.WAITING: statusString = "waiting" + eta; break;
-					case State.STOPPED: statusString = "stopped"; break;
+					case State.ISSUE: statusString += Lib.Color("yellow", issue); break;
+					case State.RUNNING:
+						if (done) statusString = Lib.BuildString(Lib.Color("red", "re-running "), Lib.Color("green", eta));
+						else statusString += Lib.Color("green", eta);
+						break;
+					case State.WAITING: statusString += "waiting..."; break;
+					case State.STOPPED: statusString += "stopped"; break;
 				}
 
 				Events["Toggle"].guiName = Lib.StatusToggle(title, statusString);
@@ -228,8 +260,8 @@ namespace KERBALISM
 			if (string.IsNullOrEmpty(issue))
 				issue = TestForResources(vessel, resourceDefs, Kerbalism.elapsed_s, ResourceCache.Get(vessel));
 
-			scienceValue = Science.Value(last_subject_id, 0);
-			state = GetState(scienceValue, issue, recording, forcedRun);
+			scienceValue = Science.Value(last_subject_id, 0, true);
+			state = GetState(vessel, scienceValue, issue, recording, forcedRun);
 
 			if (!string.IsNullOrEmpty(issue))
 			{
@@ -240,7 +272,9 @@ namespace KERBALISM
 			var subject_id = Science.Generate_subject_id(experiment_id, vessel);
 			if (last_subject_id != subject_id)
 			{
-				dataSampled = 0;
+				currentDrive = GetDriveAndData(this, last_subject_id, vessel, privateHdId, out currentFile, out currentSample);
+				lastDataSampled = GetDataSampled();
+				//dataSampled = GetDataSampledInDrive(this, subject_id, vessel, privateHdId);
 				forcedRun = false;
 			}
 			last_subject_id = subject_id;
@@ -249,52 +283,132 @@ namespace KERBALISM
 				return;
 
 			var exp = Science.Experiment(experiment_id);
-			if (dataSampled >= exp.max_amount)
-				return;
+			// TODO !!!!IMPORTANT TO FIX!!! This prevent running a second time in manual, and also breaks smart mode
+			// Maybe we need to keep track of previous dataSampled to fix ?
+
+			// we have a complete experiement on board
+			if (exp.data_max - GetDataSampled() < double.Epsilon)
+			{
+				if (forcedRun)
+				{
+					if (lastDataSampled < GetDataSampled())
+					{
+						// it was just completed, stop it
+						recording = false;
+						lastDataSampled = GetDataSampled();
+						return;
+					}
+					else
+					{
+						// get a drive and let a duplicate file/sample be created
+						currentDrive = GetDrive(this, last_subject_id, vessel, privateHdId);
+						currentFile = null;
+						currentSample = null;
+					}
+				}
+			}
+			else
+			{
+				currentDrive = GetDriveAndData(this, last_subject_id, vessel, privateHdId, out currentFile, out currentSample);
+			}
+
+			lastDataSampled = GetDataSampled();
 
 			// if experiment is active and there are no issues
 			DoRecord(ec, subject_id);
 		}
 
+		public double GetDataSampled()
+		{
+			if (currentFile != null) return currentFile.size;
+			if (currentSample != null) return currentSample.size;
+			return 0;
+		}
+
 		private void DoRecord(Resource_info ec, string subject_id)
 		{
-			var stored = DoRecord(this, subject_id, vessel, ec, privateHdId,
-				ResourceCache.Get(vessel), resourceDefs,
-				remainingSampleMass, dataSampled, out dataSampled, out remainingSampleMass);
+			var stored = DoRecord(this, subject_id, currentDrive, GetDataSampled(),
+				vessel, ec, ResourceCache.Get(vessel), resourceDefs,
+				remainingSampleMass, out remainingSampleMass);
+
+			//var stored = DoRecord(this, subject_id, vessel, ec, privateHdId,
+			//	ResourceCache.Get(vessel), resourceDefs,
+			//	remainingSampleMass, dataSampled, out dataSampled, out remainingSampleMass);
 			if (!stored) issue = insufficient_storage;
 		}
 
-		private static Drive GetDrive(Experiment experiment, Vessel vessel, uint hdId, double chunkSize, string subject_id)
+		private static Drive GetDrive(Experiment experiment, string subject_id, Vessel vessel, uint privateHdId, out File file, out Sample sample)
 		{
-			bool isFile = experiment.sample_mass < float.Epsilon;
-			Drive drive = null;
-			var vd = DB.Vessel(vessel);
-			if (hdId != 0) drive = DB.Drive(hdId);
-			else drive = isFile ? Drive.FileDrive(vessel, chunkSize) : Drive.SampleDrive(vessel, chunkSize, subject_id);
+			
+
+
+
+			if (privateHdId != 0) drive = DB.Drive(privateHdId);
+			drive.
+			else drive = isFile ? Drive.GetBestFileDrive(vessel, chunkSize, subject_id) : Drive.SampleDrive(vessel, chunkSize, subject_id);
 			return drive;
 		}
 
+		//private static double GetDataSampledInDrive(Experiment experiment, string subject_id, Vessel vessel, uint hdId)
+		//{
+		//	var exp = Science.Experiment(subject_id);
+		//	double chunkSize = Math.Min(experiment.data_rate * Kerbalism.elapsed_s, exp.max_amount);
+		//	Drive drive = GetDrive(experiment, vessel, hdId, chunkSize, subject_id);
+		//	return drive.GetExperimentSize(subject_id);
+		//}
 
-		private static bool DoRecord(Experiment experiment, string subject_id, Vessel vessel, Resource_info ec, uint hdId, 
-			Vessel_resources resources, List<KeyValuePair<string, double>> resourceDefs,
-			double remainingSampleMass, double dataSampled,
-			out double sampledOut, out double remainingSampleMassOut)
+		/// <summary>
+		/// return the drive where a subject_id file/sample exists already, or the drive with the most available space.
+		/// dataSampled returns the sum of all data stored on all drives of the vessel (for this subject_id)
+		/// </summary>
+		private static Drive GetDriveAndData(Experiment experiment, string subject_id, Vessel vessel, out double dataSampled, uint privateHdId = 0)
+		{
+			Drive drive = null;
+			bool isFile = experiment.sample_mass < float.Epsilon;
+			drive = isFile ? Drive.GetDriveForFile(vessel, subject_id, out dataSampled) : Drive.SampleDrive(vessel, 0, subject_id);
+			// force the private drive to be used
+			if (privateHdId != 0) drive = DB.Drive(privateHdId);
+			return drive;
+		}
+
+		/// <summary>
+		/// Get the drive to be used. dataSampled returns the "File" or "Sample" data value if the data exists already, 0 otherwise.
+		/// </summary>
+		private static Drive GetDriveAndData(Experiment experiment, string subject_id, Vessel vessel, uint hdId, out double dataSampled)
+		{
+			Sample sample;
+			File file;
+			Drive drive = GetDriveAndData(experiment, subject_id, vessel, hdId, out file, out sample);
+			if (file != null) dataSampled = file.size;
+			else if (sample != null) dataSampled = sample.size;
+			else dataSampled = 0;
+			return drive;
+		}
+
+		private static bool DoRecord(Experiment experiment, string subject_id, Drive drive, double dataSampled,
+			Vessel vessel, Resource_info ec, Vessel_resources resources, List<KeyValuePair<string, double>> resourceDefs,
+			double remainingSampleMass, out double remainingSampleMassOut)
 		{
 			var exp = Science.Experiment(subject_id);
 
-			if (Done(exp, dataSampled)) {
-				sampledOut = dataSampled;
+			if (Done(exp, dataSampled))
+			{
+				//sampledOut = dataSampled;
 				remainingSampleMassOut = remainingSampleMass;
 				return true;
 			}
 
 			double elapsed = Kerbalism.elapsed_s;
-			double chunkSize = Math.Min(experiment.data_rate * elapsed, exp.max_amount);
-			double massDelta = experiment.sample_mass * chunkSize / exp.max_amount;
+			double chunkSize = Math.Min(experiment.data_rate * elapsed, exp.data_max);
+			double massDelta = experiment.sample_mass * chunkSize / exp.data_max;
 
-			Drive drive = GetDrive(experiment, vessel, hdId, chunkSize, subject_id);
+			//Drive drive = GetDrive(experiment, vessel, hdId, chunkSize, subject_id);
 
-			// on high time warp this chunk size could be too big, but we could store a sizable amount if we process less
+			// restore the file if it already exists
+			//if (dataSampled < drive.GetExperimentSize(subject_id))
+			//	dataSampled = drive.GetExperimentSize(subject_id);
+
+			// on high time warp this chunk size could be too big for available drive space, but we could store a sizable amount if we process less
 			bool isFile = experiment.sample_mass < float.Epsilon;
 			double maxCapacity = isFile ? drive.FileCapacityAvailable() : drive.SampleCapacityAvailable(subject_id);
 			if (maxCapacity < chunkSize)
@@ -305,7 +419,20 @@ namespace KERBALISM
 				elapsed *= factor;
 			}
 
-			foreach(var p in resourceDefs)
+			// clamp last chunk to reach experiment max amount
+			double nextDataSampled = dataSampled + chunkSize;
+			if (nextDataSampled > exp.data_max)
+			{
+				double factor = (exp.data_max - dataSampled) / chunkSize;
+				chunkSize *= factor;
+				massDelta *= factor;
+				elapsed *= factor;
+				nextDataSampled = exp.data_max;
+			}
+
+			// TODO : if last chunk, amount should be scaled down
+			// TODO : this doesn't check if resource is available, see greenhouse for proper way to consume resource from a module
+			foreach (var p in resourceDefs)
 				resources.Consume(vessel, p.Key, p.Value * elapsed, "experiment");
 
 			bool stored = false;
@@ -316,11 +443,11 @@ namespace KERBALISM
 
 			if (stored)
 			{
+				// TODO : if last chunk, ec_rate should be scaled down
+				// TODO : this doesn't check if ec is available, see greenhouse for proper way to consume ec from a module
 				// consume ec
 				ec.Consume(experiment.ec_rate * elapsed, "experiment");
-				dataSampled += chunkSize;
-				dataSampled = Math.Min(dataSampled, exp.max_amount);
-				sampledOut = dataSampled;
+				//sampledOut = nextDataSampled;
 				if (!experiment.sample_collecting)
 				{
 					remainingSampleMass -= massDelta;
@@ -330,7 +457,7 @@ namespace KERBALISM
 				return true;
 			}
 
-			sampledOut = dataSampled;
+			//sampledOut = dataSampled;
 			remainingSampleMassOut = remainingSampleMass;
 			return false;
 		}
@@ -359,29 +486,41 @@ namespace KERBALISM
 			var subject_id = Science.Generate_subject_id(experiment.experiment_id, v);
 			Lib.Proto.Set(m, "last_subject_id", subject_id);
 
-			double dataSampled = Lib.Proto.GetDouble(m, "dataSampled");
+
+			//double dataSampled = Lib.Proto.GetDouble(m, "dataSampled");
 
 			if (last_subject_id != subject_id)
 			{
-				dataSampled = 0;
+				//dataSampled = GetDataSampledInDrive(experiment, subject_id, v, privateHdId);
 				Lib.Proto.Set(m, "forcedRun", false);
 			}
 
-			double scienceValue = Science.Value(last_subject_id);
+			double scienceValue = Science.Value(last_subject_id, 0, true);
 			Lib.Proto.Set(m, "scienceValue", scienceValue);
 
-			var state = GetState(scienceValue, issue, recording, forcedRun);
+			var state = GetState(v, scienceValue, issue, recording, forcedRun);
 			if (state != State.RUNNING)
 				return;
-			if (dataSampled >= Science.Experiment(subject_id).max_amount)
-				return;
 
-			var stored = DoRecord(experiment, subject_id, v, ec, privateHdId,
-				resources, ParseResources(experiment.resources),
-				remainingSampleMass, dataSampled, out dataSampled, out remainingSampleMass);
+			double dataSampled;
+			Drive drive = GetDriveAndData(experiment, subject_id, v, privateHdId, out dataSampled);
+
+			if (dataSampled >= Science.Experiment(subject_id).data_max)
+			{
+				if (forcedRun) Lib.Proto.Set(m, "recording", false); ;
+				return;
+			}
+
+			var stored = DoRecord(experiment, subject_id, drive, dataSampled,
+				v, ec, resources, ParseResources(experiment.resources),
+				remainingSampleMass, out remainingSampleMass);
+
+			//var stored = DoRecord(experiment, subject_id, v, ec, privateHdId,
+			//	resources, ParseResources(experiment.resources),
+			//	remainingSampleMass, dataSampled, out dataSampled, out remainingSampleMass);
 			if (!stored) Lib.Proto.Set(m, "issue", insufficient_storage);
 
-			Lib.Proto.Set(m, "dataSampled", dataSampled);
+			//Lib.Proto.Set(m, "dataSampled", dataSampled);
 			Lib.Proto.Set(m, "remainingSampleMass", remainingSampleMass);
 		}
 
@@ -492,9 +631,10 @@ namespace KERBALISM
 			if (situationIssue.Length > 0)
 				return Science.RequirementText(situationIssue);
 
-			var experimentSize = Science.Experiment(subject_id).max_amount;
+			// TODO : only check if there is some space, no need to check for the chunk size ? is that also true sor samples ?
+			var experimentSize = Science.Experiment(subject_id).data_max;
 			double chunkSize = Math.Min(experiment.data_rate * Kerbalism.elapsed_s, experimentSize);
-			Drive drive = GetDrive(experiment, v, hdId, chunkSize, subject_id);
+			Drive drive = GetDrive(experiment, subject_id, v, hdId, chunkSize);
 
 			var isFile = experiment.sample_mass < double.Epsilon;
 			double available = isFile ? drive.FileCapacityAvailable() : drive.SampleCapacityAvailable(subject_id);
@@ -625,33 +765,33 @@ namespace KERBALISM
 				return;
 			}
 
+			//dataSampled = GetDataSampledInDrive(this, Science.Generate_subject_id(experiment_id, vessel), vessel, privateHdId);
+
 			if (Lib.IsFlight() && !vessel.IsControllable)
 				return;
-
-			if (state == State.WAITING)
-			{
-				forcedRun = true;
-				recording = true;
-				return;
-			}
 
 			if (deployAnimator.Playing())
 				return; // nervous clicker? wait for it, goddamnit.
 
 			var previous_recording = recording;
 
-			// The same experiment must run only once on a vessel
 			if (!recording)
 			{
-				recording = !IsExperimentRunningOnVessel();
-				if(!recording) PostMultipleRunsMessage(Science.Experiment(experiment_id).name);
+				if (IsExperimentRunningOnVessel())
+				{
+					// The same experiment must run only once on a vessel
+					// TODO : prevent experiment from running twice after docking
+					PostMultipleRunsMessage(Science.Experiment(experiment_id).name);
+				}
+				else
+				{
+					forcedRun = !DB.Vessel(vessel).cfg_smartscience;
+					recording = true;
+				}
 			}
 			else
-				recording = false;
-
-			if (!recording)
 			{
-				dataSampled = 0;
+				recording = false;
 				forcedRun = false;
 			}
 
@@ -687,7 +827,7 @@ namespace KERBALISM
 		// action groups
 		[KSPAction("Start")] public void Start(KSPActionParam param)
 		{
-			switch (GetState(scienceValue, issue, recording, forcedRun)) {
+			switch (GetState(vessel, scienceValue, issue, recording, forcedRun)) {
 				case State.STOPPED:
 				case State.WAITING:
 					Toggle();
@@ -722,7 +862,7 @@ namespace KERBALISM
 			}
 			
 			specs.Add(string.Empty);
-			double expSize = exp.max_amount;
+			double expSize = exp.data_max;
 			if (sample_mass < float.Epsilon)
 			{
 				specs.Add("Data", Lib.HumanReadableDataSize(expSize));

@@ -178,6 +178,7 @@
     <Compile Include="External\RemoteTech.cs" />
     <Compile Include="External\ModuleManager.cs" />
     <Compile Include="External\SCANsat.cs" />
+    <Compile Include="Modules\Experiment2.cs" />
     <Compile Include="Modules\Harvester.cs" />
     <Compile Include="Modules\Emitter.cs" />
     <Compile Include="Modules\Greenhouse.cs" />
@@ -194,9 +195,14 @@
     <Compile Include="Renderer\ParticleMesh.cs" />
     <Compile Include="Renderer\ParticleRenderer.cs" />
     <Compile Include="Science\Drive.cs" />
-    <Compile Include="Science\ExperimentInfo.cs" />
+    <Compile Include="Science\Drive2.cs" />
+    <Compile Include="Science\ExperimentBaseInfo.cs" />
+    <Compile Include="Science\ExperimentProcess.cs" />
+    <Compile Include="Science\ExperimentResult.cs" />
+    <Compile Include="Science\ExperimentVariantInfo.cs" />
     <Compile Include="Science\File.cs" />
     <Compile Include="Science\Hijacker.cs" />
+    <Compile Include="Science\LaboratoryProcess.cs" />
     <Compile Include="Science\Sample.cs" />
     <Compile Include="Science\Science.cs" />
     <Compile Include="Comms\ConnectionInfo.cs" />
@@ -292,7 +298,7 @@
       <Output TaskParameter="Assemblies" ItemName="Targets" />
     </GetAssemblyIdentity>
     <ItemGroup>
-      <VersionNumber Include="@(Targets-&gt;'%(Version)')" />
+      <VersionNumber Include="@(Targets->'%(Version)')" />
     </ItemGroup>
   </Target>
   <PropertyGroup>
@@ -302,6 +308,13 @@
   </PostBuildEventDependsOn>
     <PostBuildEvent Condition="'$(OS)' == 'Windows_NT'">if "$(ConfigurationName)"=="Debug" (call "$(ProjectDir)..\..\buildscripts\UnityDebug\prepare-debug.bat" $(TargetName) 16)
 if "$(ConfigurationName)"=="Release" (call "$(ProjectDir)..\..\buildscripts\ZipPack\build-package.bat" $(TargetName) -v@(VersionNumber) 16)
+echo Copying local repository Localization files to $(TargetDir)Localization
+xcopy /E /D /Y "$(ProjectDir)..\..\GameData\Kerbalism\Localization" "$(TargetDir)\Localization\"
+</PostBuildEvent>
+  </PropertyGroup>
+  <PropertyGroup>
+    <PostBuildEvent>if "$(ConfigurationName)"=="Debug" (call "$(ProjectDir)..\..\buildscripts\UnityDebug\prepare-debug.bat" $(TargetName) 17)
+if "$(ConfigurationName)"=="Release" (call "$(ProjectDir)..\..\buildscripts\ZipPack\build-package.bat" $(TargetName) -v@(VersionNumber) 17)
 echo Copying local repository Localization files to $(TargetDir)Localization
 xcopy /E /D /Y "$(ProjectDir)..\..\GameData\Kerbalism\Localization" "$(TargetDir)\Localization\"
 </PostBuildEvent>

@@ -296,6 +296,7 @@ namespace KERBALISM
 		// --- SCIENCE --------------------------------------------------------------
 
 		// return size of a file in a vessel drive
+		// TODO : this is wrong, a single subject_id can be sliced in multiple drives
 		public static double FileSize(Vessel v, string subject_id)
 		{
 			if (!Cache.VesselInfo(v).is_valid) return 0.0;
@@ -310,6 +311,7 @@ namespace KERBALISM
 		}
 
 		// return size of a sample in a vessel drive
+		// TODO : this is wrong, a single subject_id can be sliced in multiple drives
 		public static double SampleSize(Vessel v, string subject_id)
 		{
 			if (!Cache.VesselInfo(v).is_valid) return 0.0;
@@ -326,7 +328,7 @@ namespace KERBALISM
 		public static bool StoreFile(Vessel v, string subject_id, double amount)
 		{
 			if (!Cache.VesselInfo(v).is_valid) return false;
-			return Drive.FileDrive(v, amount).Record_file(subject_id, amount);
+			return Drive.GetBestFileDrive(v, amount, subject_id).Record_file(subject_id, amount);
 		}
 
 		// store a sample on a vessel
@@ -337,6 +339,7 @@ namespace KERBALISM
 		}
 
 		// remove a file from a vessel
+		// TODO : this is wrong, a single subject_id can be sliced in multiple drives
 		public static void RemoveFile(Vessel v, string subject_id, double amount)
 		{
 			if (!Cache.VesselInfo(v).is_valid) return;
@@ -345,6 +348,7 @@ namespace KERBALISM
 		}
 
 		// remove a sample from a vessel
+		// TODO : this is wrong, a single subject_id can be sliced in multiple drives
 		public static double RemoveSample(Vessel v, string subject_id, double amount)
 		{
 			if (!Cache.VesselInfo(v).is_valid) return 0;
