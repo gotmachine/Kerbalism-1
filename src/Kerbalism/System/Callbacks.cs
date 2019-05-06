@@ -314,6 +314,7 @@ namespace KERBALISM
 				DB.KillKerbal(n, false);
 			}
 
+
 			// purge the caches
 			ResourceCache.Purge(v);
 			Drive.Purge(v);

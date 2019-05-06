@@ -462,6 +462,18 @@ namespace KERBALISM
 
 		public static void Purge(ProtoVessel proto_vessel)
 		{
+			foreach (var drive in GetDrives(proto_vessel))
+			{
+				foreach (var p in drive.files)
+				{
+					if (p.Value.buff > double.Epsilon)
+					{
+						Lib.Log("Purge, crediting " + p.Key + " of " + p.Value.buff);
+						Science.Credit(p.Key, p.Value.buff, true, proto_vessel);
+					}
+				}
+			}
+
 			foreach (ProtoPartSnapshot p in proto_vessel.protoPartSnapshots)
 			{
 				DB.drives.Remove(p.flightID);
