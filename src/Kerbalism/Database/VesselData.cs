@@ -103,15 +103,31 @@ namespace KERBALISM
 			return supplies[name];
 		}
 
-		public ExperimentProcess GetExperimentProcess(uint part_id, string experiment_id)
+		public ExperimentProcess GetExperimentProcess(Part part, string exp_info_id)
 		{
 			for (int i = 0; i < experiments.Count; i++)
 			{
-				if (experiments[i].part_id == part_id && experiments[i].exp_info.experiment_id)
-				{
-
-				}
+				if (experiments[i].part_id == part.flightID
+					&& experiments[i].exp_info.id == exp_info_id)
+					return experiments[i];
 			}
+			return null;
+		}
+
+		public ExperimentProcess AddExperimentProcess(Part part, string exp_info_id, double sample_amount, bool recording, bool forcedRun)
+		{
+			// having duplicates of an experiment on the same part is unsupported
+			ExperimentProcess process = GetExperimentProcess(part, exp_info_id);
+			if (process != null)
+			{
+				Lib.Log("WARNING : part '" + part.name + "' has a duplicate of experiment '" + exp_info_id + "'");
+			}
+			else
+			{
+				process = new ExperimentProcess(part, exp_info_id, sample_amount, recording, forcedRun);
+				experiments.Add(process);
+			}
+			return process;
 		}
 
 		public bool msg_signal;       // message flag: link status
@@ -137,7 +153,10 @@ namespace KERBALISM
 		// - most intensive use will be iterating over all elements in Science.Update() -> List is better
 		// - second use is querying the ExpProcess from the partmodule.OnLoad/OnStart -> dictionary could be better
 		// - because multiple experiements per part, would need a Dictionary<partId, ExpProcess[]> -> not great
-		public List<ExperimentProcess> experiments;
+		/// <summary>
+		/// all ExperimentProcess for the vessel. Get/Add/Remove trough the *ExperimentProcess methods
+		/// </summary>
+		private List<ExperimentProcess> experiments;
 	}
 
 

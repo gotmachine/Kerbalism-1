@@ -76,7 +76,7 @@ namespace KERBALISM
 			sit = ScienceUtil.GetExperimentSituation(vessel);
 		}
 
-		internal bool IsAvailable(ScienceExperiment exp, CelestialBody mainBody)
+		internal bool IsAvailable(ScienceExperiment exp)
 		{
 			return exp.IsAvailableWhile(sit, vessel.mainBody);
 		}

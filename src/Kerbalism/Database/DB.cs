@@ -143,12 +143,11 @@ namespace KERBALISM
 
 		public static VesselData Vessel(Vessel v)
 		{
-			Guid id = Lib.VesselID(v);
-			if (!vessels.ContainsKey(id))
+			if (!vessels.ContainsKey(Lib.VesselID(v)))
 			{
-				vessels.Add(id, new VesselData());
+				vessels.Add(Lib.VesselID(v), new VesselData());
 			}
-			return vessels[id];
+			return vessels[Lib.VesselID(v)];
 		}
 
 

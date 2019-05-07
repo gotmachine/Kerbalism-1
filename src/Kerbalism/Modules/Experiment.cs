@@ -174,7 +174,7 @@ namespace KERBALISM
 			Events["Reset"].requireFullControl = false;
 		}
 
-		public static bool Done(ExperimentVariantInfo exp, double dataSampled)
+		public static bool Done(ExperimentInfo exp, double dataSampled)
 		{
 			if (exp.data_max < double.Epsilon) return false;
 			return dataSampled >= exp.data_max;

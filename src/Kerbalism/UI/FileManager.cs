@@ -117,7 +117,7 @@ namespace KERBALISM
 		static void Render_file(Panel p, uint partId, string filename, File file, Drive drive, bool short_strings, double rate)
 		{
 			// get experiment info
-			ExperimentVariantInfo exp = Science.Experiment(filename);
+			ExperimentInfo exp = Science.Experiment(filename);
 
 			// render experiment name
 			string exp_label = Lib.BuildString
@@ -125,13 +125,13 @@ namespace KERBALISM
 			  "<b>",
 			  Lib.Ellipsis(exp.title, Styles.ScaleStringLength(short_strings ? 24 : 38)),
 			  "</b> <size=", Styles.ScaleInteger(10).ToString(), ">",
-			  Lib.Ellipsis(ExperimentVariantInfo.Situation(filename), Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.title, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
+			  Lib.Ellipsis(ExperimentInfo.Situation(filename), Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.title, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
 			  "</size>"
 			);
 			string exp_tooltip = Lib.BuildString
 			(
 			  exp.title, "\n",
-			  "<color=#aaaaaa>", ExperimentVariantInfo.Situation(filename), "</color>"
+			  "<color=#aaaaaa>", ExperimentInfo.Situation(filename), "</color>"
 			);
 			double exp_value = Science.Value(filename, file.size);
 			if (exp_value >= 0.1) exp_tooltip = Lib.BuildString(exp_tooltip, "\n<b>", Lib.HumanReadableScience(exp_value), "</b>");
@@ -153,7 +153,7 @@ namespace KERBALISM
 		static void Render_sample(Panel p, uint partId, string filename, Sample sample, Drive drive, bool short_strings)
 		{
 			// get experiment info
-			ExperimentVariantInfo exp = Science.Experiment(filename);
+			ExperimentInfo exp = Science.Experiment(filename);
 
 			// render experiment name
 			string exp_label = Lib.BuildString
@@ -161,13 +161,13 @@ namespace KERBALISM
 			  "<b>",
 			  Lib.Ellipsis(exp.title, Styles.ScaleStringLength(short_strings ? 24 : 38)),
 			  "</b> <size=", Styles.ScaleInteger(10).ToString(), ">",
-			  Lib.Ellipsis(ExperimentVariantInfo.Situation(filename), Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.title, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
+			  Lib.Ellipsis(ExperimentInfo.Situation(filename), Styles.ScaleStringLength((short_strings ? 32 : 62) - Lib.Ellipsis(exp.title, Styles.ScaleStringLength(short_strings ? 24 : 38)).Length)),
 			  "</size>"
 			);
 			string exp_tooltip = Lib.BuildString
 			(
 			  exp.title, "\n",
-			  "<color=#aaaaaa>", ExperimentVariantInfo.Situation(filename), "</color>"
+			  "<color=#aaaaaa>", ExperimentInfo.Situation(filename), "</color>"
 			);
 			double exp_value = Science.Value(filename, sample.size);
 			if (exp_value >= 0.1) exp_tooltip = Lib.BuildString(exp_tooltip, "\n<b>", Lib.HumanReadableScience(exp_value), "</b>");

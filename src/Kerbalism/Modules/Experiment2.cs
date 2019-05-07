@@ -11,7 +11,7 @@ namespace KERBALISM
 		// config
 
 		// id of the stock "EXPERIMENT_DEFINITION" or "variant_id" set in the "EXPERIMENT_INFO" node
-		[KSPField] public string experiment_id;                 
+		[KSPField] public string exp_info_id;                 
 
 		// amount of "blank" samples, if set to 0 the experiment will generate a file
 		// sample mass added to the module will be sample_amount * experiment_info.sample_mass
@@ -27,9 +27,10 @@ namespace KERBALISM
 		[KSPField] public string anim_loop = string.Empty; // running animation
 		[KSPField] public bool anim_loop_reverse = false;
 
-		// for persistence only. do not use directly, get them from the ExperimentProcess object
-		[KSPField(isPersistant = true)] private bool editorRecording;
-		[KSPField(isPersistant = true)] private bool editorForcedRun;
+		// for prefab/editor only. Never use in flight, get them from the ExperimentProcess object
+		[KSPField(isPersistant = true)] private bool editorRecording = false;
+		[KSPField(isPersistant = true)] private bool editorForcedRun = false;
+		[KSPField(isPersistant = true)] private bool flightProcessCreated = false;
 
 		// animations
 		internal Animator deployAnimator;
@@ -51,25 +52,34 @@ namespace KERBALISM
 
 		public override void OnLoad(ConfigNode node)
 		{
-			// try to have the prefab correctly initialized
+			// Get a temporary process for the prefab and in the editor
 			if (Lib.IsEditor() || HighLogic.LoadedScene == GameScenes.LOADING)
 			{
-				if (!Science.ExperimentInfoExists(experiment_id))
-				{
-					process = null;
-					Lib.Log("ERROR: No ExperimentInfo found for id " + experiment_id);
-					return;
-				}
+				process = new ExperimentProcess(part, exp_info_id, sample_amount, editorRecording, editorForcedRun);
 
-				process = new ExperimentProcess(part, experiment_id, sample_amount, editorRecording, editorForcedRun);
-
-				// TODO : is that still necessary ? If we correctly set the mass on the prefab it shouldn't
+				// TODO : is that still necessary ? If the prefab is correctly initialized with it's own ExperimentProcess it shouldn't...
 				if (IsSample()) GameEvents.onEditorShipModified.Fire(EditorLogic.fetch.ship);
 			}
-			// get the process from the DB
-			else if (Lib.IsFlight())
+
+			// in flight get/add the process from the DB
+			if (Lib.IsFlight())
 			{
-				DB.Vessel(vessel).experiments
+				if (flightProcessCreated)
+				{
+					process = DB.Vessel(vessel).GetExperimentProcess(part, exp_info_id);
+				}
+				else
+				{
+					process = DB.Vessel(vessel).AddExperimentProcess(part, exp_info_id, sample_amount, editorRecording, editorForcedRun);
+					if (process != null) flightProcessCreated = true;
+				}
+			}
+
+			// sanity checks :
+			if (process == null || process.exp_info == null)
+			{
+				Lib.Log("ERROR : failed loading process for experiment module '" + exp_info_id + "' on part '" + part.name);
+				process = null;
 			}
 		}
 
@@ -85,42 +95,12 @@ namespace KERBALISM
 			loopAnimator = new Animator(part, anim_loop);
 			loopAnimator.reversed = anim_loop_reverse;
 
-			if (Lib.IsFlight())
-			{
-				DB.Vessel(vessel).experiments
-			}
-
-			if (process == null) process = Science.GetExperimentInfo(experiment_id);
-
 			// set initial animation states
 			deployAnimator.Still(editorRecording ? 1.0 : 0.0);
 			loopAnimator.Still(editorRecording ? 1.0 : 0.0);
 			if (editorRecording) loopAnimator.Play(false, true);
 
-			// parse crew specs
-			// TODO : do we need those here ?
-			//if (!string.IsNullOrEmpty(exp_info.crew_operate))
-			//	operator_cs = new CrewSpecs(exp_info.crew_operate);
-			//if (!string.IsNullOrEmpty(exp_info.crew_reset))
-			//	reset_cs = new CrewSpecs(exp_info.crew_reset);
-			//if (!string.IsNullOrEmpty(exp_info.crew_prepare))
-			//	prepare_cs = new CrewSpecs(exp_info.crew_prepare);
-
-			//resourceDefs = ParseResources(resources); // moved to 
-
-			foreach (var hd in part.FindModulesImplementing<HardDrive>())
-			{
-				if (hd.experiment_id == experiment_id) privateHdId = part.flightID;
-			}
-
-			//if (Lib.IsFlight())
-			//{
-			//	currentDrive = GetDriveAndData(this, last_subject_id, vessel, privateHdId, out currentFile, out currentSample);
-			//	lastDataSampled = GetDataSampled();
-			//}
-
-			//if (Lib.IsFlight()) dataSampled = GetDataSampledInDrive(this, last_subject_id, vessel, privateHdId);
-
+			// PAW ui init
 			Events["Toggle"].guiActiveUncommand = true;
 			Events["Toggle"].externalToEVAOnly = true;
 			Events["Toggle"].requireFullControl = false;
@@ -139,6 +119,7 @@ namespace KERBALISM
 			// in flight
 			if (Lib.IsFlight())
 			{
+				// TODO : What is this ???
 				Vessel v = FlightGlobals.ActiveVessel;
 				if (v == null || EVA.IsDead(v)) return;
 
@@ -226,7 +207,13 @@ namespace KERBALISM
 			// basic sanity checks
 			if (Lib.IsEditor()) return;
 			if (!Cache.VesselInfo(vessel).is_valid) return;
-			//if (next_check > Planetarium.GetUniversalTime()) return;
+
+			process.shrouded = part.ShieldedFromAirstream;
+
+
+
+
+
 
 
 

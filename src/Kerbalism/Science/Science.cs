@@ -32,6 +32,17 @@ namespace KERBALISM
 				{
 					prefab.gameObject.AddOrGetComponent<MiniHijacker>();
 				}
+
+				// load EXPERIMENT_INFO nodes
+				ConfigNode[] nodes = GameDatabase.Instance.GetConfigNodes("EXPERIMENT_INFO");
+				for (int i = 0; i < nodes.Length ; i++)
+				{
+					ExperimentInfo exp_info = new ExperimentInfo(nodes[i]);
+					if (!exp_infos.ContainsKey(exp_info.id))
+						exp_infos.Add(exp_info.id, exp_info);
+					else
+						Lib.Log("WARNING : Duplicate EXPERIMENT_INFO '"+ exp_info.id + "' wasn't loaded");
+				}
 			}
 		}
 
@@ -52,6 +63,8 @@ namespace KERBALISM
 		{
 			// do nothing if science system is disabled
 			if (!Features.Science) return;
+
+
 
 			// avoid corner-case when RnD isn't live during scene changes
 			// - this avoid losing science if the buffer reach threshold during a scene change
@@ -244,7 +257,7 @@ namespace KERBALISM
 		// credit science for the experiment subject specified
 		public static float Credit(string subject_id, double size, bool transmitted, ProtoVessel pv)
 		{
-			var credits = ExperimentInfo.Value(subject_id, size);
+			var credits = KERBALISM.ExperimentInfo.Value(subject_id, size);
 
 			// credit the science
 			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
@@ -290,40 +303,25 @@ namespace KERBALISM
 		/// <summary>
 		/// return the ExperimentInfo object corresponding to a subject_id, formatted as "experiment_id@situation"
 		/// </summary>
-		public static ExperimentVariantInfo GetExperimentInfoFromSubject(string subject_id)
+		public static ExperimentInfo GetExperimentInfoFromSubject(string subject_id)
 		{
-			ExperimentVariantInfo info;
-			if (!experiments.TryGetValue(ExperimentInfo.GetExperimentId(subject_id), out info))
-			{
-				Lib.Log("ERROR: No ExperimentInfo found for subject " + subject_id);
-				return null;
-			}
-			return info;
+			return GetExperimentInfo(ExperimentInfo.GetExperimentId(subject_id));
 		}
 
 		/// <summary>
-		/// return the ExperimentInfo object corresponding to a "experiment_id". Faster than GetExperiementInfoFromSubject().
+		/// return the ExperimentInfo object corresponding to a "experiment_id"
 		/// </summary>
-		public static ExperimentVariantInfo GetExperimentInfo(string experiment_id)
+		public static ExperimentInfo GetExperimentInfo(string experiment_id)
 		{
-			ExperimentVariantInfo info;
-			if (!experiments.TryGetValue(experiment_id, out info))
+			if (!exp_infos.ContainsKey(experiment_id))
 			{
 				Lib.Log("ERROR: No ExperimentInfo found for id " + experiment_id);
 				return null;
 			}
-			return info;
+			return exp_infos[experiment_id];
 		}
 
-		/// <summary>
-		/// return the ExperimentInfo object corresponding to a "experiment_id". Faster than GetExperiementInfoFromSubject().
-		/// </summary>
-		public static bool ExperimentInfoExists(string experiment_variant_id)
-		{
-			return experiments.ContainsKey(experiment_id);
-		}
 
-		public static bool ExperimentInfo
 
 
 		#region Stored data cache
@@ -438,129 +436,7 @@ namespace KERBALISM
 			return sit.Multiplier(body);
 		}
 
-		public static string TestRequirements(string experiment_id, string requirements, Vessel v)
-		{
-			CelestialBody body = v.mainBody;
-			Vessel_info vi = Cache.VesselInfo(v);
 
-			List<string> list = Lib.Tokenize(requirements, ',');
-			foreach (string s in list)
-			{
-				var parts = Lib.Tokenize(s, ':');
-
-				var condition = parts[0];
-				string value = string.Empty;
-				if(parts.Count > 1) value = parts[1];
-
-				bool good = true;
-				switch (condition)
-				{
-					case "OrbitMinInclination": good = v.orbit.inclination >= double.Parse(value); break;
-					case "OrbitMaxInclination": good = v.orbit.inclination <= double.Parse(value); break;
-					case "OrbitMinEccentricity": good = v.orbit.eccentricity >= double.Parse(value); break;
-					case "OrbitMaxEccentricity": good = v.orbit.eccentricity <= double.Parse(value); break;
-					case "OrbitMinArgOfPeriapsis": good = v.orbit.argumentOfPeriapsis >= double.Parse(value); break;
-					case "OrbitMaxArgOfPeriapsis": good = v.orbit.argumentOfPeriapsis <= double.Parse(value); break;
-
-					case "TemperatureMin": good = vi.temperature >= double.Parse(value); break;
-					case "TemperatureMax": good = vi.temperature <= double.Parse(value); break;
-					case "AltitudeMin": good = v.altitude >= double.Parse(value); break;
-					case "AltitudeMax": good = v.altitude <= double.Parse(value); break;
-					case "RadiationMin": good = vi.radiation >= double.Parse(value); break;
-					case "RadiationMax": good = vi.radiation <= double.Parse(value); break;
-					case "Microgravity": good = vi.zerog; break;
-					case "Body": good = TestBody(v.mainBody.name, value); break;
-					case "Shadow": good = vi.sunlight < double.Epsilon; break;
-					case "Sunlight": good = vi.sunlight > 0.5; break;
-					case "CrewMin": good = vi.crew_count >= int.Parse(value); break;
-					case "CrewMax": good = vi.crew_count <= int.Parse(value); break;
-					case "CrewCapacityMin": good = vi.crew_capacity >= int.Parse(value); break;
-					case "CrewCapacityMax": good = vi.crew_capacity <= int.Parse(value); break;
-					case "VolumePerCrewMin": good = vi.volume_per_crew >= double.Parse(value); break;
-					case "VolumePerCrewMax": good = vi.volume_per_crew <= double.Parse(value); break;
-					case "Greenhouse": good = vi.greenhouses.Count > 0; break;
-					case "Surface": good = Lib.Landed(v); break;
-					case "Atmosphere": good = body.atmosphere && v.altitude < body.atmosphereDepth; break;
-					case "AtmosphereBody": good = body.atmosphere; break;
-					case "AtmosphereAltMin": good = body.atmosphere && (v.altitude / body.atmosphereDepth) >= double.Parse(value); break;
-					case "AtmosphereAltMax": good = body.atmosphere && (v.altitude / body.atmosphereDepth) <= double.Parse(value); break;
-						                                
-					case "Vacuum": good = !body.atmosphere || v.altitude > body.atmosphereDepth; break;
-					case "Ocean": good = body.ocean && v.altitude < 0.0; break;
-					case "PlanetarySpace": good = body.flightGlobalsIndex != 0 && !Lib.Landed(v) && v.altitude > body.atmosphereDepth; break;
-					case "AbsoluteZero": good = vi.temperature < 30.0; break;
-					case "InnerBelt": good = vi.inner_belt; break;
-					case "OuterBelt": good = vi.outer_belt; break;
-					case "MagneticBelt": good = vi.inner_belt || vi.outer_belt; break;
-					case "Magnetosphere": good = vi.magnetosphere; break;
-					case "Thermosphere": good = vi.thermosphere; break;
-					case "Exosphere": good = vi.exosphere; break;
-					case "InterPlanetary": good = body.flightGlobalsIndex == 0 && !vi.interstellar; break;
-					case "InterStellar": good = body.flightGlobalsIndex == 0 && vi.interstellar; break;
-
-					case "SurfaceSpeedMin": good = v.srfSpeed >= double.Parse(value); break;
-					case "SurfaceSpeedMax": good = v.srfSpeed <= double.Parse(value); break;
-					case "VerticalSpeedMin": good = v.verticalSpeed >= double.Parse(value); break;
-					case "VerticalSpeedMax": good = v.verticalSpeed <= double.Parse(value); break;
-					case "SpeedMin": good = v.speed >= double.Parse(value); break;
-					case "SpeedMax": good = v.speed <= double.Parse(value); break;
-					case "DynamicPressureMin": good = v.dynamicPressurekPa >= double.Parse(value); break;
-					case "DynamicPressureMax": good = v.dynamicPressurekPa <= double.Parse(value); break;
-					case "StaticPressureMin": good = v.staticPressurekPa >= double.Parse(value); break;
-					case "StaticPressureMax": good = v.staticPressurekPa <= double.Parse(value); break;
-					case "AtmDensityMin": good = v.atmDensity >= double.Parse(value); break;
-					case "AtmDensityMax": good = v.atmDensity <= double.Parse(value); break;
-					case "AltAboveGroundMin": good = v.heightFromTerrain >= double.Parse(value); break;
-					case "AltAboveGroundMax": good = v.heightFromTerrain <= double.Parse(value); break;
-
-					case "Part": good = Lib.HasPart(v, value); break;
-					case "Module": good = Lib.FindModules(v.protoVessel, value).Count > 0; break;
-						
-					case "AstronautComplexLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.AstronautComplex) >= (double.Parse(value) - 1) / 2.0;
-						break;
-					case "AstronautComplexLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.AstronautComplex) <= (double.Parse(value) - 1) / 2.0;
-						break;
-
-					case "TrackingStationLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.TrackingStation) >= (double.Parse(value) - 1) / 2.0;
-						break;
-					case "TrackingStationLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.TrackingStation) <= (double.Parse(value) - 1) / 2.0;
-						break;
-
-					case "MissionControlLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.MissionControl) >= (double.Parse(value) - 1) / 2.0;
-						break;
-					case "MissionControlLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.MissionControl) <= (double.Parse(value) - 1) / 2.0;
-						break;
-
-					case "AdministrationLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.Administration) >= (double.Parse(value) - 1) / 2.0;
-						break;
-					case "AdministrationLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.Administration) <= (double.Parse(value) - 1) / 2.0;
-						break;
-
-					case "MaxAsteroidDistance": good = AsteroidDistance(v) <= double.Parse(value); break;
-				}
-
-				if (!good) return s;
-			}
-
-			// if we want to test against the stock KSP experiment,
-			// we have to create the subject at this point
-			Science.Generate_subject(experiment_id, v);
-
-			var exp = ResearchAndDevelopment.GetExperiment(experiment_id);
-			var sit = GetExperimentSituation(v);
-			if (!sit.IsAvailable(exp, v.mainBody))
-				return "Invalid situation";
-
-			return string.Empty;
-		}
 
 		public static ExperimentSituation GetExperimentSituation(Vessel v)
 		{
@@ -577,40 +453,7 @@ namespace KERBALISM
 			return false;
 		}
 
-		private static double AsteroidDistance(Vessel vessel)
-		{
-			var target = vessel.targetObject;
-			var vesselPosition = Lib.VesselPosition(vessel);
 
-			// while there is a target, only consider the targeted vessel
-			if(!vessel.loaded || target != null)
-			{
-				// asteroid MUST be the target if vessel is unloaded
-				if (target == null) return double.MaxValue;
-
-				var targetVessel = target.GetVessel();
-				if (targetVessel == null) return double.MaxValue;
-
-				if (targetVessel.vesselType != VesselType.SpaceObject) return double.MaxValue;
-
-				// this assumes that all vessels of type space object are asteroids.
-				// should be a safe bet unless Squad introduces alien UFOs.
-				var asteroidPosition = Lib.VesselPosition(targetVessel);
-				return Vector3d.Distance(vesselPosition, asteroidPosition);
-			}
-
-			// there's no target and vessel is not unloaded
-			// look for nearby asteroids
-			double result = double.MaxValue;
-			foreach(Vessel v in FlightGlobals.VesselsLoaded)
-			{
-				if (v.vesselType != VesselType.SpaceObject) continue;
-				var asteroidPosition = Lib.VesselPosition(v);
-				double distance = Vector3d.Distance(vesselPosition, asteroidPosition);
-				if (distance < result) result = distance;
-			}
-			return result;
-		}
 
 		public static string RequirementText(string requirement)
 		{
@@ -724,9 +567,11 @@ namespace KERBALISM
 		//	return sampleMasses[id];
 		//}
 
+		
+
 		// experiment info 
-		static readonly Dictionary<string, ExperimentVariantInfo> experiments = new Dictionary<string, ExperimentVariantInfo>();
-		//static readonly Dictionary<string, double> sampleMasses = new Dictionary<string, double>();
+		static readonly Dictionary<string, ExperimentInfo> exp_infos = new Dictionary<string, ExperimentInfo>();
+
 		static readonly Dictionary<string, double> storedData = new Dictionary<string, double>();
 
 	}
