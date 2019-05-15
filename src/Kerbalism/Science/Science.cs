@@ -11,8 +11,8 @@ namespace KERBALISM
 	{
 		// this controls how fast science is credited while it is being transmitted.
 		// try to be conservative here, because crediting introduces a lag
-		private const double buffer_science_value = 0.4; // min. 0.01 value
-		private const double min_buffer_size = 0.01; // min. 10kB
+		public const double buffer_science_value = 0.4; // min. 0.01 value
+		public const double min_buffer_size = 0.01; // min. 10kB
 
 		// this is for auto-transmit throttling
 		public const double min_file_size = 0.002;
@@ -33,29 +33,28 @@ namespace KERBALISM
 					prefab.gameObject.AddOrGetComponent<MiniHijacker>();
 				}
 
-				// load EXPERIMENT_INFO nodes
-				ConfigNode[] nodes = GameDatabase.Instance.GetConfigNodes("EXPERIMENT_INFO");
-				for (int i = 0; i < nodes.Length ; i++)
+				// load EXPERIMENT_VARIANT nodes
+				ConfigNode[] var_nodes = GameDatabase.Instance.GetConfigNodes("EXPERIMENT_VARIANT");
+				for (int i = 0; i < var_nodes.Length ; i++)
 				{
-					ExperimentInfo exp_info = new ExperimentInfo(nodes[i]);
+					ExperimentVariant exp_variant = new ExperimentVariant(var_nodes[i]);
+					if (!exp_variants.ContainsKey(exp_variant.id))
+						exp_variants.Add(exp_variant.id, exp_variant);
+					else
+						Lib.Log("WARNING : Duplicate EXPERIMENT_VARIANT '" + exp_variant.id + "' wasn't loaded");
+				}
+
+				// load EXPERIMENT_INFO nodes
+				ConfigNode[] exp_nodes = GameDatabase.Instance.GetConfigNodes("EXPERIMENT_INFO");
+				for (int i = 0; i < exp_nodes.Length; i++)
+				{
+					ExperimentInfo exp_info = new ExperimentInfo(exp_nodes[i]);
 					if (!exp_infos.ContainsKey(exp_info.id))
 						exp_infos.Add(exp_info.id, exp_info);
 					else
-						Lib.Log("WARNING : Duplicate EXPERIMENT_INFO '"+ exp_info.id + "' wasn't loaded");
+						Lib.Log("WARNING : Duplicate EXPERIMENT_INFO '" + exp_info.id + "' wasn't loaded");
 				}
 			}
-		}
-
-		private static Drive FindDrive(Vessel v, string filename)
-		{
-			foreach (var d in Drive.GetDrives(v, true))
-			{
-				if (d.files.ContainsKey(filename))
-				{
-					return d;
-				}
-			}
-			return null;
 		}
 
 		// consume EC for transmission, and transmit science data
@@ -66,168 +65,247 @@ namespace KERBALISM
 
 
 
-			// avoid corner-case when RnD isn't live during scene changes
-			// - this avoid losing science if the buffer reach threshold during a scene change
-			if (HighLogic.CurrentGame.Mode != Game.Modes.SANDBOX && ResearchAndDevelopment.Instance == null) return;
-
-
-			/*
-			- In experiment part module, create a "ExperimentProcess" object that contains :
-				- module state related bools
-				- issue string
-				- remainingSampleMass
-				- privateHdId
-				- a reference to the ExperimentInfo object
-				- a reference to the ExperimentResult object (can be null)
-				- double data_pending
-				- double data_consumed
-
-			- In laboratory part module, create a "SampleProcess" object that contains :
-				- lab enabled bool
-				- a reference to the ExperimentInfo object
-				- a reference to the sample ExperimentResult object (can be null)
-				- a reference to the file ExperimentResult object (can be null)
-				- double data_pending
-				- double data_consumed
-
-			- store these objects in two new dictionaries in the VesselData object accessible and persisted in DB.vessels 
-
-			- on Science.Update :
-
-				- foreach ExperimentProcess :
-					- check the situation, update the issue string
-					- if situation has changed, search for the corresponding ExperimentResult in drives
-					- if manual mode, check if the size of all files for this ExperimentInfo is a multiple of the max_amount
-					- if smart mode, check the science value left
-					- check EC and resources availability -> how to clamp data production to actual resource availability ?
-					- check that only one ExperimentProcess is running for the same ExperimentInfo
-					- if all is OK
-						- set ExperimentProcess.data_pending to the max potential data amount
-						- add the ExperimentProcess to a "exp_process_pending" list
-
-				- foreach SampleProcess :
-					- check lab resources availability / crew conditions, update the issue string
-					- if OK :
-						- get the ExperimentResult sample to be processed
-						- add the potential data amount to SampleProcess.data_pending
-						- add the SampleProcess to a "sample_process_pending" list
-
-				- get transmit_capacity, the data amount we can transmit
-
-				- from the two pending lists (samples should be first ?)
-					- get the one we want to transmit
-					- substract the amount transmitted from the ExperimentProcess/SampleProcess.data_pending
-					- substract the amount transmitted from transmit_capacity
-					- add the amount transmitted to ExperimentProcess/SampleProcess.data_consumed
-					- if the ExperimentResult is null, create it
-					- update the ExperimentResult.transmit_buffer (formerly file.buff)
-					- credit the science if the transmit_buffer has reached the buffer_science_value
-					- if the max science value has been credited
-						- if manual mode, set ExperimentProcess.running = false
-						- delete the ExperimentResult object on the drive and set data_pending = 0
-					- if there is still some transmit_capacity left, repeat with the next ExperimentProcess/SampleProcess
-
-				- for each SampleProcess in sample_process_pending :
-					- if smart mode, clamp data_pending to the data amount needed to get all science points
-					- if manual mode :
-						- search other drives for the same subject_id
-						- clamp data pending + all the data already present for this subject_id to the next greater multiple of ExperimentInfo.data_max
-					- if ExperimentResult is null find a drive and create it.
-					- if space available on drive > data_pending,
-						- data_consumed += data_pending;
-						- add data_pending to the ExperimentResult
-					- else :
-						- store what is possible on this drive, keep track of data_consumed
-						- find another drive, create a new file, repeat until data_pending = 0 or all drives are full.
-					- substract data_consumed from the sample ExperimentResult.size, if size = 0 delete the ExperimentResult from the drive
-					- consume EC according to the data_consumed/max data produced ratio
-
-				- for each ExperimentProcess in exp_process_pending :
-					- if smart mode, clamp data_pending to the data amount needed to get all science points
-					- if manual mode :
-						- search other drives for the same subject_id
-						- clamp data pending + all the data already present for this subject_id to the next greater multiple of ExperimentInfo.data_max
-					- if ExperimentResult is null find a drive and create it.
-					- if space available on drive > data_pending,
-						- data_consumed += data_pending;
-						- ExperimentResult.size += data_pending
-						- remove some ExperimentProcess.remainingSampleMass and add it to the ExperimentResult.mass
-					- else :
-						- store what is possible on this drive, keep track of data_consumed
-						- find another drive, create a new file, repeat until data_pending = 0 or all drives are full.
-					- consume EC and resources according to the data_consumed/max data produced ratio
-			*/
-
-			// get connection info
+			// get connection info and transmit capacity
+			long transmitCapacity;
 			ConnectionInfo conn = vi.connection;
-			if (conn == null || String.IsNullOrEmpty(vi.transmitting)) return;
+			if (conn == null
+				|| !conn.linked
+				|| ResourceCache.Info(v, "ElectricCharge").amount < double.Epsilon)
+				transmitCapacity = 0;
+			else
+				transmitCapacity = Lib.MBToBit(conn.rate * elapsed_s);
 
-			// get filename of data being downloaded
-			var exp_filename = vi.transmitting;
+			// TODO : prepare all labs
 
-			var drive = FindDrive(v, exp_filename);
-
-			// if some data is being downloaded
-			// - avoid cornercase at scene changes
-			if (exp_filename.Length > 0 && drive != null)
+			// prepare all experiments
+			List<ExperimentProcess> pending_exp = new List<ExperimentProcess>();
+			for (int i = 0; i < vd.experiments.Count; i++)
 			{
-				// get file
-				File file = drive.files[exp_filename];
-
-				// determine how much data is transmitted
-				double transmitted = Math.Min(file.size, conn.rate * elapsed_s);
-
-				// consume data in the file
-				file.size -= transmitted;
-
-				// accumulate in the buffer
-				file.buff += transmitted;
-
-				bool credit = file.size <= double.Epsilon;
-
-				// this is the science value remaining for this experiment
-				var remainingValue = Value(exp_filename, 0);
-
-				// this is the science value of this sample
-				var dataValue = Value(exp_filename, file.buff);
-
-				if (!credit && file.buff > min_buffer_size) credit = dataValue > buffer_science_value;
-
-				// if buffer is full, or file was transmitted completely
-				if (credit)
+				if (vd.experiments[i].Prepare(v, elapsed_s))
 				{
-					var totalValue = TotalValue(exp_filename);
+					pending_exp.Add(vd.experiments[i]);
+				}
+			}
 
-					// collect the science data
-					Credit(exp_filename, file.buff, true, v.protoVessel);
+			// get all file results from all drives
+			List<ExperimentResult> ts_results = new List<ExperimentResult>();
+			foreach (Drive2 drive in Drive2.GetDrives(v))
+			{
+				ts_results.AddRange(drive.FindAll(p => p.type == FileType.File));
+			}
 
-					// reset the buffer
-					file.buff = 0.0;
+			// TODO : CHECK : put first files that were already being transferred
+			ts_results.Sort((x, y) => y.transmit_rate.CompareTo(x.transmit_rate));
 
-					// this was the last useful bit, there is no more value in the experiment
-					if (remainingValue >= 0.1 && remainingValue - dataValue < 0.1)
+			// reset transmit_rate
+			ts_results.ForEach(r => r.transmit_rate = 0);
+
+			// filter to get only files flagged for transmit
+			ts_results.RemoveAll(r => !r.process);
+
+
+			// TODO : process labs data
+
+
+			// transmit and store experiments data
+			// note : in manual mode, if transmit capacity is enough for all data to be transmitted, the experiment will run forever.
+			for (int i = 0; i < pending_exp.Count; i++)
+			{
+				// transmit if :
+				// - there is some transmit capacity
+				// - result is a file (not a sample)
+				// - result is flagged for transfer or this is a new result and auto-transmit is true
+				if (transmitCapacity > 0
+					&& pending_exp[i].type == FileType.File
+					&& ((pending_exp[i].result != null && pending_exp[i].result.process)
+						|| (pending_exp[i].result == null && PreferencesScience.Instance.transmitScience)))
+				{
+					long transmitted = pending_exp[i].dataPending < transmitCapacity ? pending_exp[i].dataPending : transmitCapacity;
+					if (transmitted > 0)
 					{
-						
-						Message.Post(
-							Lib.BuildString(Lib.HumanReadableScience(totalValue), " ", Experiment(exp_filename).FullName(exp_filename), " completed"),
-						  Lib.TextVariant(
-								"Our researchers will jump on it right now",
-								"There is excitement because of your findings",
-								"The results are causing a brouhaha in R&D"
-							));
+						// at this point some data is transmitted so we need a result object for the transmit buffer
+						// the result is created empty and will stay empty if all the data is transmitted.
+						// this way it will appear in the file manager UI
+						if (pending_exp[i].result == null)
+						{
+							// get a drive, even a full one (we are creating a zero size file)
+							Drive2 drive = Drive2.GetDriveBestCapacity(v, pending_exp[i].type, 0, pending_exp[i].privateHdId);
+							if (drive != null)
+							{
+								pending_exp[i].result = new ExperimentResult(drive, pending_exp[i].type, pending_exp[i].subject);
+								ts_results.Add(pending_exp[i].result);
+							}
+						}
+
+						if (pending_exp[i].result != null)
+						{
+							transmitCapacity -= transmitted;
+							pending_exp[i].dataPending -= transmitted;
+							pending_exp[i].dataProcessed += transmitted;
+							pending_exp[i].result.transmit_buffer += transmitted;
+							pending_exp[i].result.transmit_rate = (long)(transmitted / elapsed_s);
+						}
 					}
 				}
 
-				// if file was transmitted completely
-				if (file.size <= double.Epsilon)
+				// we have transmitted all we can, now try storing the remaining data in drives
+				while (pending_exp[i].dataPending > 0)
 				{
-					// remove the file
-					drive.Delete_file(exp_filename);
+					if (pending_exp[i].result == null)
+					{
+						// get a drive with some space on it
+						Drive2 drive = Drive2.GetDriveBestCapacity(v, pending_exp[i].type, 1, pending_exp[i].privateHdId);
+						if (drive != null)
+							pending_exp[i].result = new ExperimentResult(drive, pending_exp[i].type, pending_exp[i].subject);
+					}
+
+					if (pending_exp[i].result == null)
+					{
+						break;
+					}
+					else
+					{
+						long stored = Math.Min(pending_exp[i].result.SizeCapacityAvailable(), pending_exp[i].dataPending);
+
+						pending_exp[i].result.size += stored;
+						if (pending_exp[i].type == FileType.Sample)
+							pending_exp[i].sampleAmount -= stored;
+
+						// if drive is full, try to find another one
+						if (stored < pending_exp[i].dataPending)
+							pending_exp[i].result = null;
+
+						pending_exp[i].dataPending -= stored;
+						pending_exp[i].dataProcessed += stored;
+					}
 				}
 			}
+
+			// if there is some transmit capacity left, transmit data stored in drives
+			if (transmitCapacity > 0)
+			{
+				for (int i = 0; i < ts_results.Count; i++)
+				{
+					if (ts_results[i].size <= 0) continue;
+					long transmitted = ts_results[i].size < transmitCapacity ? ts_results[i].size : transmitCapacity;
+
+					ts_results[i].size -= transmitted;
+					ts_results[i].transmit_buffer += transmitted;
+					ts_results[i].transmit_rate = (long)(transmitted / elapsed_s);
+
+					transmitCapacity -= transmitted;
+					if (transmitCapacity <= 0) break;
+				}
+			}
+
+			// avoid corner-case when RnD isn't live during scene changes
+			// - this avoid losing science if the buffer reach threshold during a scene change
+			// TODO : only skip the following for loop
+			if (HighLogic.CurrentGame.Mode != Game.Modes.SANDBOX && ResearchAndDevelopment.Instance == null) return;
+
+			// all file sizes are now updated
+			// actually register data transmitted for files whose buffer is full, and delete empty files
+			for (int i = 0; i < ts_results.Count; i++)
+			{
+				if (ts_results[i].transmit_buffer > 0)
+				{
+					if (ts_results[i].transmit_buffer > ts_results[i].buffer_full)
+					{
+						Credit(ts_results[i].subject_id, ts_results[i].transmit_buffer, true, v.protoVessel);
+						ts_results[i].transmit_buffer = 0;
+					}
+					else if (ts_results[i].size == 0 && ts_results[i].transmit_rate == 0)
+					{
+						Credit(ts_results[i].subject_id, ts_results[i].transmit_buffer, true, v.protoVessel);
+						ts_results[i].Delete();
+					}
+					// TODO : message when subject is completed
+					//			Message.Post(
+					//				Lib.BuildString(Lib.HumanReadableScience(totalValue), " ", Experiment(exp_filename).FullName(exp_filename), " completed"),
+					//			  Lib.TextVariant(
+					//					"Our researchers will jump on it right now",
+					//					"There is excitement because of your findings",
+					//					"The results are causing a brouhaha in R&D"
+					//				));
+				}
+			}
+
+			// TODO : EC and resource consumption
+			// TODO : not enough storage issue sent back to the process
+
+
+
+
+			//ConnectionInfo conn = vi.connection;
+			//if (conn == null || String.IsNullOrEmpty(vi.transmitting)) return;
+
+			//// get filename of data being downloaded
+			//var exp_filename = vi.transmitting;
+
+			////var drive = FindDrive(v, exp_filename);
+
+			//// if some data is being downloaded
+			//// - avoid cornercase at scene changes
+			//if (exp_filename.Length > 0 && drive != null)
+			//{
+			//	// get file
+			//	File file = drive.files[exp_filename];
+
+			//	// determine how much data is transmitted
+			//	double transmitted = Math.Min(file.size, conn.rate * elapsed_s);
+
+			//	// consume data in the file
+			//	file.size -= transmitted;
+
+			//	// accumulate in the buffer
+			//	file.buff += transmitted;
+
+			//	bool credit = file.size <= double.Epsilon;
+
+			//	// this is the science value remaining for this experiment
+			//	var remainingValue = Value(exp_filename, 0);
+
+			//	// this is the science value of this sample
+			//	var dataValue = Value(exp_filename, file.buff);
+
+			//	if (!credit && file.buff > min_buffer_size) credit = dataValue > buffer_science_value;
+
+			//	// if buffer is full, or file was transmitted completely
+			//	if (credit)
+			//	{
+			//		var totalValue = TotalValue(exp_filename);
+
+			//		// collect the science data
+			//		Credit(exp_filename, file.buff, true, v.protoVessel);
+
+			//		// reset the buffer
+			//		file.buff = 0.0;
+
+			//		// this was the last useful bit, there is no more value in the experiment
+			//		if (remainingValue >= 0.1 && remainingValue - dataValue < 0.1)
+			//		{
+						
+			//			Message.Post(
+			//				Lib.BuildString(Lib.HumanReadableScience(totalValue), " ", Experiment(exp_filename).FullName(exp_filename), " completed"),
+			//			  Lib.TextVariant(
+			//					"Our researchers will jump on it right now",
+			//					"There is excitement because of your findings",
+			//					"The results are causing a brouhaha in R&D"
+			//				));
+			//		}
+			//	}
+
+			//	// if file was transmitted completely
+			//	if (file.size <= double.Epsilon)
+			//	{
+			//		// remove the file
+			//		drive.Delete_file(exp_filename);
+			//	}
+			//}
 		}
 
 		// return name of file being transmitted from vessel specified
+		// TODO : adapt this, and see how we can adjust EC consumption
 		public static string Transmitting(Vessel v, bool linked)
 		{
 			// never transmitting if science system is disabled
@@ -257,12 +335,13 @@ namespace KERBALISM
 		// credit science for the experiment subject specified
 		public static float Credit(string subject_id, double size, bool transmitted, ProtoVessel pv)
 		{
-			var credits = KERBALISM.ExperimentInfo.Value(subject_id, size);
+			var credits = KERBALISM.ExperimentVariant.Value(subject_id, size);
 
 			// credit the science
 			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
 			if(subject == null)
 			{
+				// TODO : actually create the subject !
 				Lib.Log("WARNING: science subject " + subject_id + " cannot be credited in R&D");
 			}
 			else
@@ -303,22 +382,22 @@ namespace KERBALISM
 		/// <summary>
 		/// return the ExperimentInfo object corresponding to a subject_id, formatted as "experiment_id@situation"
 		/// </summary>
-		public static ExperimentInfo GetExperimentInfoFromSubject(string subject_id)
+		public static ExperimentVariant GetExperimentInfoFromSubject(string subject_id)
 		{
-			return GetExperimentInfo(ExperimentInfo.GetExperimentId(subject_id));
+			return GetExperimentInfo(ExperimentVariant.GetExperimentId(subject_id));
 		}
 
 		/// <summary>
 		/// return the ExperimentInfo object corresponding to a "experiment_id"
 		/// </summary>
-		public static ExperimentInfo GetExperimentInfo(string experiment_id)
+		public static ExperimentVariant GetExperimentInfo(string experiment_id)
 		{
-			if (!exp_infos.ContainsKey(experiment_id))
+			if (!exp_variants.ContainsKey(experiment_id))
 			{
 				Lib.Log("ERROR: No ExperimentInfo found for id " + experiment_id);
 				return null;
 			}
-			return exp_infos[experiment_id];
+			return exp_variants[experiment_id];
 		}
 
 
@@ -346,11 +425,11 @@ namespace KERBALISM
 		}
 
 		// Get stored data amount in all vessels
-		public static double GetStoredData(string subject_id)
+		public static long GetStoredData(string subject_id)
 		{ return storedData.ContainsKey(subject_id) ? storedData[subject_id] : 0; }
 
 		// Add data amount to the stored experiements data cache
-		public static void AddStoredData(string subject_id, double amount)
+		public static void AddStoredData(string subject_id, long amount)
 		{
 			if (storedData.ContainsKey(subject_id))
 				storedData[subject_id] += amount;
@@ -359,7 +438,7 @@ namespace KERBALISM
 		}
 
 		// Remove data amount to the stored experiements data cache
-		public static void RemoveStoredData(string subject_id, double amount)
+		public static void RemoveStoredData(string subject_id, long amount)
 		{ if (storedData.ContainsKey(subject_id)) storedData[subject_id] = Math.Max(storedData[subject_id] - amount, 0); }
 
 		// Remove all data for the experiement subject from the stored experiements data cache
@@ -369,92 +448,9 @@ namespace KERBALISM
 		#endregion
 
 		#region Experiments utils
-		// TODO : move those elsewhere. maybe ExperimentInfo ?
-
-		public static string Generate_subject_id(string experiment_id, Vessel v)
-		{
-			var body = v.mainBody;
-			ScienceExperiment experiment = ResearchAndDevelopment.GetExperiment(experiment_id);
-			ExperimentSituation sit = GetExperimentSituation(v);
-
-			var sitStr = sit.ToString();
-			if(!string.IsNullOrEmpty(sitStr))
-			{
-				if (sit.BiomeIsRelevant(experiment))
-					sitStr += ScienceUtil.GetExperimentBiome(v.mainBody, v.latitude, v.longitude);
-			}
-
-			// generate subject id
-			return Lib.BuildString(experiment_id, "@", body.name, sitStr);
-		}
-
-		public static string Generate_subject(string experiment_id, Vessel v)
-		{
-			var subject_id = Generate_subject_id(experiment_id, v);
-
-			// in sandbox, do nothing else
-				if (ResearchAndDevelopment.Instance == null) return subject_id;
-
-			// if the subject id was never added to RnD
-			if (ResearchAndDevelopment.GetSubjectByID(subject_id) == null)
-			{
-				// get subjects container using reflection
-				// - we tried just changing the subject.id instead, and
-				//   it worked but the new id was obviously used only after
-				//   putting RnD through a serialization->deserialization cycle
-				var subjects = Lib.ReflectionValue<Dictionary<string, ScienceSubject>>
-				(
-				  ResearchAndDevelopment.Instance,
-				  "scienceSubjects"
-				);
-
-				var experiment = ResearchAndDevelopment.GetExperiment(experiment_id);
-				var sit = GetExperimentSituation(v);
-				var biome = ScienceUtil.GetExperimentBiome(v.mainBody, v.latitude, v.longitude);
-				float multiplier = Multiplier(v.mainBody, sit);
-				var cap = multiplier * experiment.baseValue;
-
-				// create new subject
-				ScienceSubject subject = new ScienceSubject
-				(
-				  		subject_id,
-						Lib.BuildString(experiment.experimentTitle, " (", Lib.SpacesOnCaps(sit + biome), ")"),
-						experiment.dataScale,
-				  		multiplier,
-						cap
-				);
-
-				// add it to RnD
-				subjects.Add(subject_id, subject);
-			}
-
-			return subject_id;
-		}
-
-		private static float Multiplier(CelestialBody body, ExperimentSituation sit)
-		{
-			return sit.Multiplier(body);
-		}
 
 
-
-		public static ExperimentSituation GetExperimentSituation(Vessel v)
-		{
-			return new ExperimentSituation(v);
-		}
-
-		private static bool TestBody(string bodyName, string requirement)
-		{
-			foreach(string s in Lib.Tokenize(requirement, ';'))
-			{
-				if (s == bodyName) return true;
-				if(s[0] == '!' && s.Substring(1) == bodyName) return false;
-			}
-			return false;
-		}
-
-
-
+		// TODO : migrate to ExperimentVariant
 		public static string RequirementText(string requirement)
 		{
 			var parts = Lib.Tokenize(requirement, ':');
@@ -539,40 +535,15 @@ namespace KERBALISM
 
 		#endregion
 
-		//public static void RegisterSampleMass(string experiment_id, double sampleMass)
-		//{
-		//	// get experiment id out of subject id
-		//	int i = experiment_id.IndexOf('@');
-		//	var id = i > 0 ? experiment_id.Substring(0, i) : experiment_id;
 
-		//	if (sampleMasses.ContainsKey(id))
-		//	{
-		//		if (Math.Abs(sampleMasses[id] - sampleMass) > double.Epsilon)
-		//			Lib.Log("Science Warning: different sample masses for Experiment " + id + " defined.");
-		//	}
-		//	else
-		//	{
-		//		sampleMasses.Add(id, sampleMass);
-		//		Lib.Log("Science: registered sample mass for " + id + ": " + sampleMass.ToString("F3"));
-		//	}
-		//}
-
-		//public static double GetSampleMass(string experiment_id)
-		//{
-		//	// get experiment id out of subject id
-		//	int i = experiment_id.IndexOf('@');
-		//	var id = i > 0 ? experiment_id.Substring(0, i) : experiment_id;
-
-		//	if (!sampleMasses.ContainsKey(id)) return 0;
-		//	return sampleMasses[id];
-		//}
 
 		
 
 		// experiment info 
+		static readonly Dictionary<string, ExperimentVariant> exp_variants = new Dictionary<string, ExperimentVariant>();
 		static readonly Dictionary<string, ExperimentInfo> exp_infos = new Dictionary<string, ExperimentInfo>();
 
-		static readonly Dictionary<string, double> storedData = new Dictionary<string, double>();
+		static readonly Dictionary<string, long> storedData = new Dictionary<string, long>();
 
 	}
 

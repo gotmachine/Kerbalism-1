@@ -196,10 +196,10 @@
     <Compile Include="Renderer\ParticleRenderer.cs" />
     <Compile Include="Science\Drive.cs" />
     <Compile Include="Science\Drive2.cs" />
-    <Compile Include="Science\ExperimentBaseInfo.cs" />
     <Compile Include="Science\ExperimentProcess.cs" />
     <Compile Include="Science\ExperimentResult.cs" />
-    <Compile Include="Science\ExperimentInfo.cs" />
+    <Compile Include="Science\ExperimentSubject.cs" />
+    <Compile Include="Science\ExperimentVariant.cs" />
     <Compile Include="Science\File.cs" />
     <Compile Include="Science\Hijacker.cs" />
     <Compile Include="Science\LaboratoryProcess.cs" />
@@ -266,7 +266,7 @@
     <Compile Include="Modules\Sickbay.cs" />
     <Compile Include="Automation\Devices\Sickbay.cs" />
     <Compile Include="Modules\KerbalismScansat.cs" />
-    <Compile Include="Science\ExperimentSituation.cs" />
+    <Compile Include="Science\ExperimentInfo.cs" />
   </ItemGroup>
   <ItemGroup>
     <Analyzer Condition="Exists('$(KSPDEVDIR)\KSP_x64_Data\Managed\Assembly-CSharp-firstpass.dll')" Include="$(KSPDEVDIR)\KSP_x64_Data\Managed\Assembly-CSharp-firstpass.dll" />

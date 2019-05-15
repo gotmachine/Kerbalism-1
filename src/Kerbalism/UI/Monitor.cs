@@ -618,7 +618,7 @@ namespace KERBALISM
 			string comms_str = conn.linked ? Localizer.Format("#KERBALISM_UI_telemetry") : Localizer.Format("#KERBALISM_Generic_NOTHING");
 			if (vi.transmitting.Length > 0)
 			{
-				ExperimentInfo exp = Science.Experiment(vi.transmitting);
+				ExperimentVariant exp = Science.Experiment(vi.transmitting);
 				comms_str = exp.title;
 			}
 

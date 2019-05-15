@@ -103,28 +103,29 @@ namespace KERBALISM
 			return supplies[name];
 		}
 
-		public ExperimentProcess GetExperimentProcess(Part part, string exp_info_id)
+
+		public ExperimentProcess GetExperimentProcess(Part part, string exp_variant_id)
 		{
 			for (int i = 0; i < experiments.Count; i++)
 			{
-				if (experiments[i].part_id == part.flightID
-					&& experiments[i].exp_info.id == exp_info_id)
+				if (experiments[i].partId == part.flightID
+					&& experiments[i].expVar.id == exp_variant_id)
 					return experiments[i];
 			}
 			return null;
 		}
 
-		public ExperimentProcess AddExperimentProcess(Part part, string exp_info_id, double sample_amount, bool recording, bool forcedRun)
+		public ExperimentProcess AddExperimentProcess(Part part, string exp_variant_id, double sample_amount, bool recording, bool forcedRun)
 		{
 			// having duplicates of an experiment on the same part is unsupported
-			ExperimentProcess process = GetExperimentProcess(part, exp_info_id);
+			ExperimentProcess process = GetExperimentProcess(part, exp_variant_id);
 			if (process != null)
 			{
-				Lib.Log("WARNING : part '" + part.name + "' has a duplicate of experiment '" + exp_info_id + "'");
+				Lib.Log("WARNING : part '" + part.name + "' has a duplicate of experiment '" + exp_variant_id + "'");
 			}
 			else
 			{
-				process = new ExperimentProcess(part, exp_info_id, sample_amount, recording, forcedRun);
+				process = new ExperimentProcess(part, exp_variant_id, sample_amount, recording, forcedRun);
 				experiments.Add(process);
 			}
 			return process;
@@ -156,7 +157,7 @@ namespace KERBALISM
 		/// <summary>
 		/// all ExperimentProcess for the vessel. Get/Add/Remove trough the *ExperimentProcess methods
 		/// </summary>
-		private List<ExperimentProcess> experiments;
+		public List<ExperimentProcess> experiments;
 	}
 
 

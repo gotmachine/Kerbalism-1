@@ -241,7 +241,7 @@ namespace KERBALISM
 			vessel = part.vessel;
 
 			// get the container module storing the data
-			container = Science.Container(part, ExperimentInfo.GetExperimentId(data.subjectID));
+			container = Science.Container(part, ExperimentVariant.GetExperimentId(data.subjectID));
 
 			// get the stock experiment module storing the data (if that's the case)
 			experiment = container != null ? container as ModuleScienceExperiment : null;

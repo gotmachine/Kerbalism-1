@@ -169,8 +169,8 @@ namespace KERBALISM
 				// test if adding the amount to the sample would exceed our capacity
 				sample = samples[subject_id];
 
-				int existingSampleSlots = Lib.SampleSizeToSlots(sample.size);
-				int newSampleSlots = Lib.SampleSizeToSlots(sample.size + amount);
+				int existingSampleSlots = Lib.SampleSizeToFullSlots(sample.size);
+				int newSampleSlots = Lib.SampleSizeToFullSlots(sample.size + amount);
 				if (currentSampleSlots - existingSampleSlots + newSampleSlots > sampleCapacity)
 					return false;
 			}
@@ -391,7 +391,7 @@ namespace KERBALISM
 			double result = Lib.SlotsToSampleSize(sampleCapacity - SamplesSize());
 			if (samples.ContainsKey(filename))
 			{
-				int slotsForMyFile = Lib.SampleSizeToSlots(samples[filename].size);
+				int slotsForMyFile = Lib.SampleSizeToFullSlots(samples[filename].size);
 				double amountLostToSlotting = Lib.SlotsToSampleSize(slotsForMyFile) - samples[filename].size;
 				result += amountLostToSlotting;
 			}
@@ -403,7 +403,7 @@ namespace KERBALISM
 			int amount = 0;
 			foreach (var p in samples)
 			{
-				amount += Lib.SampleSizeToSlots(p.Value.size);
+				amount += Lib.SampleSizeToFullSlots(p.Value.size);
 			}
 			return amount;
 		}

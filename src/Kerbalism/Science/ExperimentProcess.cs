@@ -10,7 +10,7 @@ namespace KERBALISM
 
 	/// <summary>
 	/// Object tied to an Experiment PartModule, holds all the data needed to execute the experiment logic.
-	/// <para/>It is first created by the PartModule, stored in the VesselData object, accessed and persisted trough DB.vessels.
+	/// <para/>It is first created by the PartModule, referenced in the VesselData object, accessed and persisted trough DB.vessels.
 	/// <para/>It stays available for both loaded and unloaded vessels and is processed in Science.Update().
 	/// <para/>The PartModule always have a reference to it when the vessel is loaded, and can query it for UI stuff.
 	/// <para/>It is also available in the editor but not persisted so anything set in the editor should be persisted on the PM
@@ -18,171 +18,197 @@ namespace KERBALISM
 	public sealed class ExperimentProcess
 	{
 		// persistence
-		public uint part_id;
+		public uint partId;
 		public bool enabled; // synchronized with the PM enabled / moduleIsEnabled state
 		public bool recording;
 		public bool forcedRun;
+		public bool smartMode;
 		public bool didPrepare;
+		public bool needReset;
 		public bool shrouded;
 		public bool broken; // TODO : is that needed ? Side note : check synchronization with the PM enabled/moduleIsEnabled state
-		public double remainingSampleMass;
+		public long sampleAmount; // use integers internaly to avoid rounding errors
 		public uint privateHdId;
-		public string issue;
 
-		//
-		public ExperimentInfo exp_info;
+		// state
+		private bool hasIssue;
+		private string situationIssue;
+		private string processIssue;
+		private List<string> requireIssues;
+
+		// dataSampled will be set when the subject changes and then increased everytime some data is processed by this process
+		// but do not expect it to accuratly reflect the data amount present in drive, it will become incoherent in many situations :
+		// - if some data is transmitted or transfered from the drives
+		// - if some data is added or removed by another process
+		// it's purpose is only to prevent experiments in manual mode from running forever
+		private long dataSampled;
+		private double scienceValue;
+
+		public ExperimentVariant expVar;
+		public FileType type;
+		public ExperimentSubject subject;
 		public ExperimentResult result;
 
-		private string last_subject_id;
+		public long dataPending;
+		public long dataProcessed;
 
-		double data_pending;
-		double data_consumed;
+		public enum State
+		{
+			STOPPED = 0, ISSUE = 1, SMART_WAIT = 2, SMART_RUN = 3, FORCED_RUN = 4
+		}
+
+		public State GetState()
+		{
+			if (hasIssue) return State.ISSUE;
+			if (!recording) return State.STOPPED;
+			if (forcedRun) return State.FORCED_RUN;
+			if (scienceValue < double.Epsilon && smartMode) return State.SMART_WAIT;
+			return State.SMART_RUN;
+		}
 
 		/// <summary>
 		/// Use only in the editor or when the vessel is first launched
 		/// </summary>
 		/// <param name="experimentModule"></param>
-		public ExperimentProcess(Part part, string exp_info_id, double sample_amount, bool recording, bool forcedRun)
+		public ExperimentProcess(Part part, string exp_variant_id, int sample_amount, bool recording, bool forcedRun)
 		{
-			exp_info = Science.GetExperimentInfo(exp_info_id);
-			this.part_id = part.flightID;
+			expVar = Science.GetExperimentInfo(exp_variant_id);
+			this.partId = part.flightID;
 			this.recording = recording;
 			this.forcedRun = forcedRun;
 			this.didPrepare = false;
 			this.shrouded = part.ShieldedFromAirstream;
 			this.broken = false;
-			this.remainingSampleMass = sample_amount * exp_info.sample_mass;
+			this.sampleAmount = sample_amount * expVar.exp_info.dataSize;
+			if (sampleAmount == 0)
+				type = FileType.File;
+			else
+				type = FileType.Sample;
 		}
 
-		public void Update(Vessel vessel)
+		public bool Prepare(Vessel vessel, double elapsed_s)
 		{
-			// get ec handler
-			Resource_info ec = ResourceCache.Info(vessel, "ElectricCharge");
+			// TODO optimisation : only test all conditions if the module PAW or the device UI need it
+			// this can probably be done using the onPartActionUICreate / onPartActionUIDismiss events for PAW UI
+			// and we can manage that easily for the devices
 
-			// test for issues
+			// clear result reference if it was deleted
+			if (result != null && result.isDeleted) result = null;
 
+			// test for non-situation dependant issues
+			processIssue = TestForIssues(vessel);
 
+			// test for requirements issues
+			requireIssues = expVar.TestRequirements(vessel);
 
-
-
-
-
-
-
-
-			issue = TestForIssues(vessel, ec, this, privateHdId, broken,
-				remainingSampleMass, didPrepare, shrouded, last_subject_id);
-
-			if (string.IsNullOrEmpty(issue))
-				issue = TestForResources(vessel, resourceDefs, Kerbalism.elapsed_s, ResourceCache.Get(vessel));
-
-			scienceValue = Science.Value(last_subject_id, 0, true);
-			state = GetState(vessel, scienceValue, issue, recording, forcedRun);
-
-			if (!string.IsNullOrEmpty(issue))
+			// get subject and result
+			if (subject == null)
 			{
-				next_check = Planetarium.GetUniversalTime() + Math.Max(3, Kerbalism.elapsed_s * 3);
-				return;
-			}
-
-			var subject_id = Science.Generate_subject_id(experiment_id, vessel);
-			if (last_subject_id != subject_id)
-			{
-				currentDrive = GetDriveAndData(this, last_subject_id, vessel, privateHdId, out currentFile, out currentSample);
-				lastDataSampled = GetDataSampled();
-				//dataSampled = GetDataSampledInDrive(this, subject_id, vessel, privateHdId);
-				forcedRun = false;
-			}
-			last_subject_id = subject_id;
-
-			if (state != State.RUNNING)
-				return;
-
-			var exp = Science.Experiment(experiment_id);
-			// TODO !!!!IMPORTANT TO FIX!!! This prevent running a second time in manual, and also breaks smart mode
-			// Maybe we need to keep track of previous dataSampled to fix ?
-
-			// we have a complete experiement on board
-			if (exp.data_max - GetDataSampled() < double.Epsilon)
-			{
-				if (forcedRun)
+				subject = new ExperimentSubject(expVar.exp_info, vessel);
+				if (subject.isValid)
 				{
-					if (lastDataSampled < GetDataSampled())
-					{
-						// it was just completed, stop it
-						recording = false;
-						lastDataSampled = GetDataSampled();
-						return;
-					}
-					else
-					{
-						// get a drive and let a duplicate file/sample be created
-						currentDrive = GetDrive(this, last_subject_id, vessel, privateHdId);
-						currentFile = null;
-						currentSample = null;
-					}
+					result = Drive2.FindPartialResult(vessel, expVar.exp_info, subject.subject_id, type, privateHdId, out dataSampled);
 				}
+			}
+			else if (subject.HasChanged(vessel))
+			{
+				subject = new ExperimentSubject(expVar.exp_info, vessel);
+				forcedRun = false;
+
+				if (subject.isValid)
+				{
+					result = Drive2.FindPartialResult(vessel, expVar.exp_info, subject.subject_id, type, privateHdId, out dataSampled);
+				}
+				else
+				{
+					result = null;
+				}
+			}
+
+			// note : available space on drives will be checked after we know what has been transmitted
+			if (!subject.isValid || requireIssues.Count > 0 || !string.IsNullOrEmpty(processIssue))
+				hasIssue = true;
+
+			// check for science value
+			// TODO : do not use science value, use data amount
+			if (subject.isValid)
+				scienceValue = subject.ScienceValueRemainingTotal();
+			else
+				scienceValue = 0;
+
+
+			if (GetState() > State.SMART_WAIT)
+			{
+				dataPending = (long)(expVar.data_rate * elapsed_s);
+				// clamp data to what is actually needed
+				if (forcedRun)
+					dataPending = Math.Min(dataPending, expVar.exp_info.dataSize - (dataSampled % expVar.exp_info.dataSize));
+				else
+					dataPending = Math.Min(dataPending, subject.DataRemainingTotal());
 			}
 			else
 			{
-				currentDrive = GetDriveAndData(this, last_subject_id, vessel, privateHdId, out currentFile, out currentSample);
+				dataPending = 0;
 			}
 
-			lastDataSampled = GetDataSampled();
+			dataProcessed = 0;
+			return dataPending > 0;
 
-			// if experiment is active and there are no issues
-			DoRecord(ec, subject_id);
+			// TODO : update dataSampled after a 
 		}
 
-		private string TestForIssues(Vessel v, Resource_info ec)
+		public double GetPercentDone()
+		{
+			if (smartMode)
+				return 1.0 - (subject.ScienceValueRemainingTotal() / subject.ScienceValueGame());
+			else
+				return (dataSampled % expVar.exp_info.dataSize) / expVar.exp_info.dataSize;
+		}
+
+		public double GetSampleMass()
+		{
+			return sampleAmount * expVar.exp_info.massPerBit;
+		}
+
+		private string TestForIssues(Vessel v)
 		{
 			//var subject_id = Science.Generate_subject_id(experiment.experiment_id, v);
 
 			if (broken)
 				return "broken";
 
-			if (shrouded && !exp_info.allow_shrouded)
+			if (shrouded && !expVar.allow_shrouded)
 				return "shrouded";
 
-			// TODO : this won't work because the new result.subject_id will not exist...
-			if (exp_info.crew_reset.Length > 0
-				&& !string.IsNullOrEmpty(last_subject_id)
-				&& result.subject_id != last_subject_id)
+			if (needReset)
 				return "reset required";
 
-			if (ec.amount < double.Epsilon && exp_info.ec_rate > 0)
+			Resource_info ec = ResourceCache.Info(v, "ElectricCharge");
+			if (ec.amount < double.Epsilon && expVar.ec_rate > 0)
 				return "no Electricity";
 
-			if (!string.IsNullOrEmpty(exp_info.crew_operate))
+			for (int i = 0; i < expVar.res_parsed.Length; i++)
 			{
-				var cs = new CrewSpecs(exp_info.crew_operate);
+				// TODO : this check will be inconsistent when timewarping fast, just check that amount > 0
+				Resource_info ri = ResourceCache.Info(v, expVar.res_parsed[i].key);
+				if (ri.amount < expVar.res_parsed[i].value * Kerbalism.elapsed_s)
+					return "missing " + ri.resource_name;
+			}
+
+			if (!string.IsNullOrEmpty(expVar.crew_operate))
+			{
+				var cs = new CrewSpecs(expVar.crew_operate);
 				if (!cs && Lib.CrewCount(v) > 0)
 					return "crew on board";
 				else if (cs && !cs.Check(v))
 					return cs.Warning();
 			}
 
-			if (!exp_info.sample_collecting && remainingSampleMass < double.Epsilon
-				&& exp_info.sample_mass > 0)
+			if (type == FileType.Sample && !expVar.sample_collecting && sampleAmount <= 0)
 				return "depleted";
 
-			if (!didPrepare && !string.IsNullOrEmpty(exp_info.crew_prepare))
+			if (!didPrepare && !string.IsNullOrEmpty(expVar.crew_prepare))
 				return "not prepared";
-
-			string situationIssue = Science.TestRequirements(experiment.experiment_id, experiment.requires, v);
-			if (situationIssue.Length > 0)
-				return Science.RequirementText(situationIssue);
-
-			// TODO : only check if there is some space, no need to check for the chunk size ? is that also true sor samples ?
-			var experimentSize = Science.Experiment(subject_id).data_max;
-			double chunkSize = Math.Min(experiment.data_rate * Kerbalism.elapsed_s, experimentSize);
-			Drive drive = GetDrive(experiment, subject_id, v, hdId, chunkSize);
-
-			var isFile = experiment.sample_mass < double.Epsilon;
-			double available = isFile ? drive.FileCapacityAvailable() : drive.SampleCapacityAvailable(subject_id);
-
-			if (Math.Min(experiment.data_rate * Kerbalism.elapsed_s, experimentSize) > available)
-				return insufficient_storage;
 
 			return string.Empty;
 		}

@@ -10,12 +10,12 @@ namespace KERBALISM
 	{
 		// config
 
-		// id of the stock "EXPERIMENT_DEFINITION" or "variant_id" set in the "EXPERIMENT_INFO" node
-		[KSPField] public string exp_info_id;                 
+		// id of the "EXPERIMENT_VARIANT"
+		[KSPField] public string exp_variant_id;                 
 
 		// amount of "blank" samples, if set to 0 the experiment will generate a file
-		// sample mass added to the module will be sample_amount * experiment_info.sample_mass
-		[KSPField] public double sample_amount = 0;
+		// sample mass added to the module will be sample_amount * experiment_variant.sample_mass
+		[KSPField] public int sample_amount = 0;
 
 		// don't show UI when the experiment is unavailable
 		[KSPField] public bool hide_when_unavailable = false;	
@@ -38,27 +38,24 @@ namespace KERBALISM
 
 		// object actually holding the usefull data
 		// should never be accessed trough the PM, but from DB.vessels ?
+		// TODO : set to null OnDestroy() and check (how?) that there is no memory leak when unloading the vessel
 		private ExperimentProcess process;
 
-		private State state = State.STOPPED;
+		//private State state = State.STOPPED;
 		private CrewSpecs operator_cs;
 		private CrewSpecs reset_cs;
 		private CrewSpecs prepare_cs;
 
-		public enum State
-		{
-			STOPPED = 0, WAITING, RUNNING, ISSUE
-		}
 
 		public override void OnLoad(ConfigNode node)
 		{
-			// Get a temporary process for the prefab and in the editor
+			// Create a dummy process for the prefab and in the editor
 			if (Lib.IsEditor() || HighLogic.LoadedScene == GameScenes.LOADING)
 			{
-				process = new ExperimentProcess(part, exp_info_id, sample_amount, editorRecording, editorForcedRun);
+				process = new ExperimentProcess(part, exp_variant_id, sample_amount, editorRecording, editorForcedRun);
 
-				// TODO : is that still necessary ? If the prefab is correctly initialized with it's own ExperimentProcess it shouldn't...
-				if (IsSample()) GameEvents.onEditorShipModified.Fire(EditorLogic.fetch.ship);
+				// TODO : why is this necessary ?
+				// if (IsSample()) GameEvents.onEditorShipModified.Fire(EditorLogic.fetch.ship);
 			}
 
 			// in flight get/add the process from the DB
@@ -66,19 +63,19 @@ namespace KERBALISM
 			{
 				if (flightProcessCreated)
 				{
-					process = DB.Vessel(vessel).GetExperimentProcess(part, exp_info_id);
+					process = DB.Vessel(vessel).GetExperimentProcess(part, exp_variant_id);
 				}
 				else
 				{
-					process = DB.Vessel(vessel).AddExperimentProcess(part, exp_info_id, sample_amount, editorRecording, editorForcedRun);
+					process = DB.Vessel(vessel).AddExperimentProcess(part, exp_variant_id, sample_amount, editorRecording, editorForcedRun);
 					if (process != null) flightProcessCreated = true;
 				}
 			}
 
 			// sanity checks :
-			if (process == null || process.exp_info == null)
+			if (process == null || process.expVar == null || process.expVar.exp_info == null)
 			{
-				Lib.Log("ERROR : failed loading process for experiment module '" + exp_info_id + "' on part '" + part.name);
+				Lib.Log("ERROR : failed loading process for experiment module '" + exp_variant_id + "' on part '" + part.name);
 				process = null;
 			}
 		}
@@ -119,7 +116,7 @@ namespace KERBALISM
 			// in flight
 			if (Lib.IsFlight())
 			{
-				// TODO : What is this ???
+				// TODO : What is this for ???
 				Vessel v = FlightGlobals.ActiveVessel;
 				if (v == null || EVA.IsDead(v)) return;
 
@@ -131,22 +128,44 @@ namespace KERBALISM
 
 				//var sampleSize = exp.data_max;
 				//var dataSampled = GetDataSampled();
-				//var eta = exp_info.data_rate < double.Epsilon || Done(exp, dataSampled) ? " (done)" : " " + Lib.HumanReadableCountdown((exp_info.data_max - dataSampled) / exp_info.data_rate); //TODO  account for remaining science value, not only size 
+				//var eta = exp_variant.data_rate < double.Epsilon || Done(exp, dataSampled) ? " (done)" : " " + Lib.HumanReadableCountdown((exp_variant.data_max - dataSampled) / exp_variant.data_rate); //TODO  account for remaining science value, not only size 
 
 				// update ui
-				var title = Lib.Ellipsis(exp_info.title, Styles.ScaleStringLength(24));
+				var title = Lib.Ellipsis(exp_variant.title, Styles.ScaleStringLength(24));
 
 				//var valueTotal = Science.TotalValue(last_subject_id);
 				//var valueDone = valueTotal - scienceValue;
 				//bool done = scienceValue < double.Epsilon;
 
-				// TODO : UI : one toggle that show/hide all other PAW elements
-				// - label : current situation
-				// - label : status + science left + ETA -> for science left, do "valueDoneOnVessel (ValueDoneOnAllVessels) / totalValue"
-				// - if issue, label for issue
-				// - button : start/stop
-				// - toggle : smart/manual
+				// TODO : UI : one toggle that show/hide all other PAW elements, label = status + % done
+				// - toggle : start/stop -> label = ETA
+				// - toggle : smart/manual -> label = science left -> "valueDoneOnVessel (ValueDoneEverywhere) / totalValue"
+				// - label : current situation (if invalid, do it in red + don't show biomes)
+				// - if issue(s), label(s) for issue(s) (max 3 ?)
 				// + other buttons (reset, prepare, etc...)
+
+				string statusString;
+				switch (process.GetState())
+				{
+					case ExperimentProcess.State.STOPPED:
+						statusString = "stopped";
+						break;
+					case ExperimentProcess.State.ISSUE:
+						statusString = "issue";
+						break;
+					case ExperimentProcess.State.SMART_WAIT:
+						statusString = "waiting";
+						break;
+					case ExperimentProcess.State.SMART_RUN:
+						statusString = "running : " + Lib.HumanReadablePerc(process.GetPercentDone(), "F1");
+						break;
+					case ExperimentProcess.State.FORCED_RUN:
+						statusString = "manual run : " + Lib.HumanReadablePerc(process.GetPercentDone(), "F1"); ;
+						break;
+					default:
+						break;
+				}
+
 
 				//string statusString = Lib.Color(done ? "green" : "#00ffffff", Lib.BuildString("•", valueDone.ToString("F1"), "/", valueTotal.ToString("F1"), " "), true);
 
@@ -196,7 +215,7 @@ namespace KERBALISM
 			else if (Lib.IsEditor())
 			{
 				// update ui
-				Events["Toggle"].guiName = Lib.StatusToggle(exp_info.title, recording ? "recording" : "stopped");
+				Events["Toggle"].guiName = Lib.StatusToggle(exp_variant.title, recording ? "recording" : "stopped");
 				Events["Reset"].active = false;
 				Events["Prepare"].active = false;
 			}
@@ -211,95 +230,6 @@ namespace KERBALISM
 			process.shrouded = part.ShieldedFromAirstream;
 
 
-
-
-
-
-
-
-			// get ec handler
-			Resource_info ec = ResourceCache.Info(vessel, "ElectricCharge");
-			shrouded = part.ShieldedFromAirstream;
-			issue = TestForIssues(vessel, ec, this, privateHdId, broken,
-				remainingSampleMass, didPrepare, shrouded, last_subject_id);
-
-			if (string.IsNullOrEmpty(issue))
-				issue = TestForResources(vessel, resourceDefs, Kerbalism.elapsed_s, ResourceCache.Get(vessel));
-
-			scienceValue = Science.Value(last_subject_id, 0, true);
-			state = GetState(vessel, scienceValue, issue, recording, forcedRun);
-
-			if (!string.IsNullOrEmpty(issue))
-			{
-				next_check = Planetarium.GetUniversalTime() + Math.Max(3, Kerbalism.elapsed_s * 3);
-				return;
-			}
-
-			var subject_id = Science.Generate_subject_id(experiment_id, vessel);
-			if (last_subject_id != subject_id)
-			{
-				currentDrive = GetDriveAndData(this, last_subject_id, vessel, privateHdId, out currentFile, out currentSample);
-				lastDataSampled = GetDataSampled();
-				//dataSampled = GetDataSampledInDrive(this, subject_id, vessel, privateHdId);
-				forcedRun = false;
-			}
-			last_subject_id = subject_id;
-
-			if (state != State.RUNNING)
-				return;
-
-			var exp = Science.Experiment(experiment_id);
-			// TODO !!!!IMPORTANT TO FIX!!! This prevent running a second time in manual, and also breaks smart mode
-			// Maybe we need to keep track of previous dataSampled to fix ?
-
-			// we have a complete experiement on board
-			if (exp.data_max - GetDataSampled() < double.Epsilon)
-			{
-				if (forcedRun)
-				{
-					if (lastDataSampled < GetDataSampled())
-					{
-						// it was just completed, stop it
-						recording = false;
-						lastDataSampled = GetDataSampled();
-						return;
-					}
-					else
-					{
-						// get a drive and let a duplicate file/sample be created
-						currentDrive = GetDrive(this, last_subject_id, vessel, privateHdId);
-						currentFile = null;
-						currentSample = null;
-					}
-				}
-			}
-			else
-			{
-				currentDrive = GetDriveAndData(this, last_subject_id, vessel, privateHdId, out currentFile, out currentSample);
-			}
-
-			lastDataSampled = GetDataSampled();
-
-			// if experiment is active and there are no issues
-			DoRecord(ec, subject_id);
-		}
-
-
-		public static State GetState(Vessel v, double scienceValue, string issue, bool recording, bool forcedRun)
-		{
-			bool hasValue = scienceValue > double.Epsilon;
-			bool smartScience = DB.Vessel(v).cfg_smartscience;
-
-			if (issue.Length > 0) return State.ISSUE;
-			if (!recording) return State.STOPPED;
-			if (!hasValue && forcedRun) return State.RUNNING;
-			if (!hasValue && smartScience) return State.WAITING;
-			return State.RUNNING;
-		}
-
-		public bool IsSample()
-		{
-			return sample_amount != 0;
 		}
 
 		// part tooltip
@@ -308,43 +238,40 @@ namespace KERBALISM
 			return Specs().Info();
 		}
 
-
-
 		// specifics support
 		public Specifics Specs()
 		{
 			var specs = new Specifics();
 			//var exp = Science.Experiment(experiment_id);
-			if (exp_info == null)
+			if (process == null)
 			{
 				specs.Add(Localizer.Format("#KERBALISM_ExperimentInfo_Unknown"));
 				return specs;
 			}
 
-			specs.Add(Lib.BuildString("<b>", exp_info.title, "</b>"));
-			if (!string.IsNullOrEmpty(exp_info.experiment_desc))
+			specs.Add(Lib.BuildString("<b>", process.expVar.exp_info.experimentTitle, "</b>"));
+			if (!string.IsNullOrEmpty(process.expVar.experiment_desc))
 			{
-				specs.Add(Lib.BuildString("<i>", exp_info.experiment_desc, "</i>"));
+				specs.Add(Lib.BuildString("<i>", process.expVar.experiment_desc, "</i>"));
 			}
 
 			specs.Add(string.Empty);
-			//double expSize = exp_info.data_max;
-			if (IsSample())
+			//double expSize = exp_variant.data_max;
+			if (process.type == FileType.File)
 			{
-				specs.Add("Data", Lib.HumanReadableDataSize(exp_info.data_max));
-				specs.Add("Data rate", Lib.HumanReadableDataRate(exp_info.data_rate));
-				specs.Add("Duration", Lib.HumanReadableDuration(exp_info.data_max / exp_info.data_rate));
+				specs.Add("Data size", Lib.HumanReadableDataSize(process.expVar.exp_info.dataSize));
+				specs.Add("Data rate", Lib.HumanReadableDataRate(process.expVar.data_rate));
 			}
 			else
 			{
-				specs.Add("Sample size", Lib.HumanReadableSampleSize(exp_info.data_max));
-				specs.Add("Sample mass", Lib.HumanReadableMass(exp_info.sample_mass));
-				if (!exp_info.sample_collecting && exp_info.sample_mass > 0)
-					specs.Add("Experiments", sample_amount.ToString("F0"));
-				specs.Add("Duration", Lib.HumanReadableDuration(exp_info.data_max / exp_info.data_rate));
+				specs.Add("Sample size", Lib.HumanReadableSampleSize(process.expVar.exp_info.dataSize));
+				specs.Add("Sample mass", Lib.HumanReadableMass(process.expVar.exp_info.sample_mass));
+				if (!process.expVar.sample_collecting)
+					specs.Add("Sample amount", sample_amount.ToString());
 			}
+			specs.Add("Duration", Lib.HumanReadableDuration((double)process.expVar.exp_info.dataSize / process.expVar.data_rate));
 
-			List<string> situations = exp_info.Situations();
+			List<string> situations = process.expVar.exp_info.Situations();
 			if (situations.Count > 0)
 			{
 				specs.Add(string.Empty);
@@ -355,31 +282,31 @@ namespace KERBALISM
 			specs.Add(string.Empty);
 			specs.Add("<color=#00ffff>Needs:</color>");
 
-			specs.Add("EC", Lib.HumanReadableRate(exp_info.ec_rate));
-			foreach (var p in exp_info.ParseResources())
-				specs.Add(p.Key, Lib.HumanReadableRate(p.Value));
+			specs.Add("EC", Lib.HumanReadableRate(process.expVar.ec_rate));
+			foreach (var p in process.expVar.res_parsed)
+				specs.Add(p.key, Lib.HumanReadableRate(p.value));
 
-			if (exp_info.crew_prepare.Length > 0)
-			{
-				var cs = new CrewSpecs(exp_info.crew_prepare);
-				specs.Add("Preparation", cs ? cs.Info() : "none");
-			}
-			if (exp_info.crew_operate.Length > 0)
-			{
-				var cs = new CrewSpecs(exp_info.crew_operate);
-				specs.Add("Operation", cs ? cs.Info() : "unmanned");
-			}
-			if (exp_info.crew_reset.Length > 0)
-			{
-				var cs = new CrewSpecs(exp_info.crew_reset);
-				specs.Add("Reset", cs ? cs.Info() : "none");
-			}
+			//if (exp_variant.crew_prepare.Length > 0)
+			//{
+			//	var cs = new CrewSpecs(exp_variant.crew_prepare);
+			//	specs.Add("Preparation", cs ? cs.Info() : "none");
+			//}
+			//if (exp_variant.crew_operate.Length > 0)
+			//{
+			//	var cs = new CrewSpecs(exp_variant.crew_operate);
+			//	specs.Add("Operation", cs ? cs.Info() : "unmanned");
+			//}
+			//if (exp_variant.crew_reset.Length > 0)
+			//{
+			//	var cs = new CrewSpecs(exp_variant.crew_reset);
+			//	specs.Add("Reset", cs ? cs.Info() : "none");
+			//}
 
-			if (!string.IsNullOrEmpty(exp_info.requires))
+			if (!string.IsNullOrEmpty(process.expVar.requires))
 			{
 				specs.Add(string.Empty);
 				specs.Add("<color=#00ffff>Requires:</color>", string.Empty);
-				var tokens = Lib.Tokenize(exp_info.requires, ',');
+				var tokens = Lib.Tokenize(process.expVar.requires, ',');
 				foreach (string s in tokens) specs.Add(Lib.BuildString("• <b>", Science.RequirementText(s), "</b>"));
 			}
 
@@ -389,7 +316,7 @@ namespace KERBALISM
 		// module mass support
 		public float GetModuleMass(float defaultMass, ModifierStagingSituation sit)
 		{
-			return process != null ? (float)process.remainingSampleMass : 0f;
+			return process != null ? (float)process.GetSampleMass() : 0f;
 		}
 		public ModifierChangeWhen GetModuleMassChangeWhen() { return ModifierChangeWhen.CONSTANTLY; }
 	}

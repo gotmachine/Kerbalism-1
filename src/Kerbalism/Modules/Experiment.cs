@@ -174,7 +174,7 @@ namespace KERBALISM
 			Events["Reset"].requireFullControl = false;
 		}
 
-		public static bool Done(ExperimentInfo exp, double dataSampled)
+		public static bool Done(ExperimentVariant exp, double dataSampled)
 		{
 			if (exp.data_max < double.Epsilon) return false;
 			return dataSampled >= exp.data_max;
@@ -569,7 +569,7 @@ namespace KERBALISM
 			// test if there are enough resources on the vessel
 			foreach(var p in defs)
 			{
-				var ri = res.Info(v, p.Key);
+				Resource_info ri = res.Info(v, p.Key);
 				if (ri.amount < p.Value * elapsed_s)
 					return "missing " + ri.resource_name;
 			}
