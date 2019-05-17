@@ -49,7 +49,7 @@ namespace KERBALISM
 			{
 				foreach (var drive_node in node.GetNode("drives").GetNodes())
 				{
-					drives.Add(Lib.Parse.ToUInt(drive_node.name), new Drive(drive_node));
+					drives.Add(Lib.Parse.ToUInt(drive_node.name), new Drive(drive_node, version));
 				}
 			}
 
@@ -216,7 +216,7 @@ namespace KERBALISM
 		public static int uid;                                 // savegame unique id
 		private static Dictionary<string, KerbalData> kerbals; // store data per-kerbal
 		public static Dictionary<Guid, VesselData> vessels;    // store data per-vessel, indexed by root part id
-		public static Dictionary<uint, Drive2> drives;         // all drives, of all vessels, indexed by part id
+		public static Dictionary<uint, Drive> drives;         // all drives, of all vessels, indexed by part id
 		public static Dictionary<string, BodyData> bodies;     // store data per-body
 		public static LandmarkData landmarks;                  // store landmark data
 		public static UIData ui;                               // store ui data

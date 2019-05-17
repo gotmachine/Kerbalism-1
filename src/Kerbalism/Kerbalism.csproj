@@ -178,7 +178,7 @@
     <Compile Include="External\RemoteTech.cs" />
     <Compile Include="External\ModuleManager.cs" />
     <Compile Include="External\SCANsat.cs" />
-    <Compile Include="Modules\Experiment2.cs" />
+    <Compile Include="Modules\Experiment.cs" />
     <Compile Include="Modules\Harvester.cs" />
     <Compile Include="Modules\Emitter.cs" />
     <Compile Include="Modules\Greenhouse.cs" />
@@ -186,7 +186,6 @@
     <Compile Include="Modules\Laboratory.cs" />
     <Compile Include="Modules\ProcessController.cs" />
     <Compile Include="Modules\Sensor.cs" />
-    <Compile Include="Modules\Experiment.cs" />
     <Compile Include="Modules\Reliability.cs" />
     <Compile Include="Modules\WarpFixer.cs" />
     <Compile Include="Profile\Modifiers.cs" />
@@ -195,15 +194,12 @@
     <Compile Include="Renderer\ParticleMesh.cs" />
     <Compile Include="Renderer\ParticleRenderer.cs" />
     <Compile Include="Science\Drive.cs" />
-    <Compile Include="Science\Drive2.cs" />
     <Compile Include="Science\ExperimentProcess.cs" />
     <Compile Include="Science\ExperimentResult.cs" />
     <Compile Include="Science\ExperimentSubject.cs" />
     <Compile Include="Science\ExperimentVariant.cs" />
-    <Compile Include="Science\File.cs" />
     <Compile Include="Science\Hijacker.cs" />
     <Compile Include="Science\LaboratoryProcess.cs" />
-    <Compile Include="Science\Sample.cs" />
     <Compile Include="Science\Science.cs" />
     <Compile Include="Comms\ConnectionInfo.cs" />
     <Compile Include="Comms\Communications.cs" />

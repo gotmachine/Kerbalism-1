@@ -12,7 +12,8 @@ namespace KERBALISM
 		// this controls how fast science is credited while it is being transmitted.
 		// try to be conservative here, because crediting introduces a lag
 		public const double buffer_science_value = 0.4; // min. 0.01 value
-		public const double min_buffer_size = 0.01; // min. 10kB
+		public const long min_buffer_size = 81920; // min. 10kB
+		public const long max_file_size = 9007199254740992; // max 1 PT (1024 TB)
 
 		// this is for auto-transmit throttling
 		public const double min_file_size = 0.002;
@@ -33,6 +34,17 @@ namespace KERBALISM
 					prefab.gameObject.AddOrGetComponent<MiniHijacker>();
 				}
 
+				// load EXPERIMENT_INFO nodes first
+				ConfigNode[] exp_nodes = GameDatabase.Instance.GetConfigNodes("EXPERIMENT_INFO");
+				for (int i = 0; i < exp_nodes.Length; i++)
+				{
+					ExperimentInfo exp_info = new ExperimentInfo(exp_nodes[i]);
+					if (!exp_infos.ContainsKey(exp_info.id))
+						exp_infos.Add(exp_info.id, exp_info);
+					else
+						Lib.Log("WARNING : Duplicate EXPERIMENT_INFO '" + exp_info.id + "' wasn't loaded");
+				}
+
 				// load EXPERIMENT_VARIANT nodes
 				ConfigNode[] var_nodes = GameDatabase.Instance.GetConfigNodes("EXPERIMENT_VARIANT");
 				for (int i = 0; i < var_nodes.Length ; i++)
@@ -44,16 +56,7 @@ namespace KERBALISM
 						Lib.Log("WARNING : Duplicate EXPERIMENT_VARIANT '" + exp_variant.id + "' wasn't loaded");
 				}
 
-				// load EXPERIMENT_INFO nodes
-				ConfigNode[] exp_nodes = GameDatabase.Instance.GetConfigNodes("EXPERIMENT_INFO");
-				for (int i = 0; i < exp_nodes.Length; i++)
-				{
-					ExperimentInfo exp_info = new ExperimentInfo(exp_nodes[i]);
-					if (!exp_infos.ContainsKey(exp_info.id))
-						exp_infos.Add(exp_info.id, exp_info);
-					else
-						Lib.Log("WARNING : Duplicate EXPERIMENT_INFO '" + exp_info.id + "' wasn't loaded");
-				}
+
 			}
 		}
 
@@ -89,7 +92,7 @@ namespace KERBALISM
 
 			// get all file results from all drives
 			List<ExperimentResult> ts_results = new List<ExperimentResult>();
-			foreach (Drive2 drive in Drive2.GetDrives(v))
+			foreach (Drive drive in Drive.GetDrives(v))
 			{
 				ts_results.AddRange(drive.FindAll(p => p.type == FileType.File));
 			}
@@ -129,7 +132,7 @@ namespace KERBALISM
 						if (pending_exp[i].result == null)
 						{
 							// get a drive, even a full one (we are creating a zero size file)
-							Drive2 drive = Drive2.GetDriveBestCapacity(v, pending_exp[i].type, 0, pending_exp[i].privateHdId);
+							Drive drive = Drive.GetDriveBestCapacity(v, pending_exp[i].type, 0, pending_exp[i].privateHdId);
 							if (drive != null)
 							{
 								pending_exp[i].result = new ExperimentResult(drive, pending_exp[i].type, pending_exp[i].subject);
@@ -142,7 +145,7 @@ namespace KERBALISM
 							transmitCapacity -= transmitted;
 							pending_exp[i].dataPending -= transmitted;
 							pending_exp[i].dataProcessed += transmitted;
-							pending_exp[i].result.transmit_buffer += transmitted;
+							pending_exp[i].result.transmitBuffer += transmitted;
 							pending_exp[i].result.transmit_rate = (long)(transmitted / elapsed_s);
 						}
 					}
@@ -154,7 +157,7 @@ namespace KERBALISM
 					if (pending_exp[i].result == null)
 					{
 						// get a drive with some space on it
-						Drive2 drive = Drive2.GetDriveBestCapacity(v, pending_exp[i].type, 1, pending_exp[i].privateHdId);
+						Drive drive = Drive.GetDriveBestCapacity(v, pending_exp[i].type, 1, pending_exp[i].privateHdId);
 						if (drive != null)
 							pending_exp[i].result = new ExperimentResult(drive, pending_exp[i].type, pending_exp[i].subject);
 					}
@@ -190,7 +193,7 @@ namespace KERBALISM
 					long transmitted = ts_results[i].size < transmitCapacity ? ts_results[i].size : transmitCapacity;
 
 					ts_results[i].size -= transmitted;
-					ts_results[i].transmit_buffer += transmitted;
+					ts_results[i].transmitBuffer += transmitted;
 					ts_results[i].transmit_rate = (long)(transmitted / elapsed_s);
 
 					transmitCapacity -= transmitted;
@@ -207,16 +210,16 @@ namespace KERBALISM
 			// actually register data transmitted for files whose buffer is full, and delete empty files
 			for (int i = 0; i < ts_results.Count; i++)
 			{
-				if (ts_results[i].transmit_buffer > 0)
+				if (ts_results[i].transmitBuffer > 0)
 				{
-					if (ts_results[i].transmit_buffer > ts_results[i].buffer_full)
+					if (ts_results[i].transmitBuffer > ts_results[i].bufferFull)
 					{
-						Credit(ts_results[i].subject_id, ts_results[i].transmit_buffer, true, v.protoVessel);
-						ts_results[i].transmit_buffer = 0;
+						Credit(ts_results[i].subject_id, ts_results[i].transmitBuffer, true, v.protoVessel);
+						ts_results[i].transmitBuffer = 0;
 					}
 					else if (ts_results[i].size == 0 && ts_results[i].transmit_rate == 0)
 					{
-						Credit(ts_results[i].subject_id, ts_results[i].transmit_buffer, true, v.protoVessel);
+						Credit(ts_results[i].subject_id, ts_results[i].transmitBuffer, true, v.protoVessel);
 						ts_results[i].Delete();
 					}
 					// TODO : message when subject is completed
@@ -318,14 +321,14 @@ namespace KERBALISM
 			if (ResourceCache.Info(v, "ElectricCharge").amount <= double.Epsilon) return string.Empty;
 
 			// get first file flagged for transmission, AND has a ts at least 5 seconds old or is > 0.001Mb in size
-			foreach (var drive in Drive.GetDrives(v, true))
-			{
-				double now = Planetarium.GetUniversalTime();
-				foreach (var p in drive.files)
-				{
-					if (drive.GetFileSend(p.Key) && (p.Value.ts + 3 < now || p.Value.size > min_file_size)) return p.Key;
-				}
-			}
+			//foreach (var drive in Drive.GetDrives(v, true))
+			//{
+			//	double now = Planetarium.GetUniversalTime();
+			//	foreach (var p in drive.files)
+			//	{
+			//		if (drive.GetFileSend(p.Key) && (p.Value.ts + 3 < now || p.Value.size > min_file_size)) return p.Key;
+			//	}
+			//}
 
 			// no file flagged for transmission
 			return string.Empty;
@@ -379,25 +382,36 @@ namespace KERBALISM
 		}
 
 
-		/// <summary>
-		/// return the ExperimentInfo object corresponding to a subject_id, formatted as "experiment_id@situation"
-		/// </summary>
-		public static ExperimentVariant GetExperimentInfoFromSubject(string subject_id)
-		{
-			return GetExperimentInfo(ExperimentVariant.GetExperimentId(subject_id));
-		}
+
 
 		/// <summary>
 		/// return the ExperimentInfo object corresponding to a "experiment_id"
 		/// </summary>
-		public static ExperimentVariant GetExperimentInfo(string experiment_id)
+		public static ExperimentInfo GetExperimentInfo(string experiment_id)
 		{
-			if (!exp_variants.ContainsKey(experiment_id))
+			if (!exp_infos.ContainsKey(experiment_id))
 			{
 				Lib.Log("ERROR: No ExperimentInfo found for id " + experiment_id);
 				return null;
 			}
-			return exp_variants[experiment_id];
+			return exp_infos[experiment_id];
+		}
+
+		/// <summary>
+		/// return the ExperimentInfo object corresponding to a subject_id, formatted as "experiment_id@situation"
+		/// </summary>
+		public static ExperimentInfo GetExperimentInfoFromSubject(string subject_id)
+		{
+			return GetExperimentInfo(GetExperimentId(subject_id));
+		}
+
+		/// <summary>
+		/// Get experiment id from a full subject id
+		/// </summary>
+		public static string GetExperimentId(string subject_id)
+		{
+			int i = subject_id.IndexOf('@');
+			return i > 0 ? subject_id.Substring(0, i) : subject_id;
 		}
 
 

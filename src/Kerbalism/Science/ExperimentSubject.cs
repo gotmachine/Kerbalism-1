@@ -1,4 +1,5 @@
-﻿using System;
+﻿using KSP.Localization;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -33,11 +34,11 @@ namespace KERBALISM
 			if (isValid)
 				subject_id = Lib.BuildString(exp_info.id, "@", body.name, situation.ToString(), biome.Replace(" ", string.Empty));
 			else
-				subject_id = string.Empty;
-				
+				subject_id = string.Empty;	
 		}
 
-		// TODO : add an overload with an "out ExperimentSubject new_subject" parameter
+		// TODO : add an overload with an "out ExperimentSubject subject"
+		// if return false, return the new subject else return the current one
 		public bool HasChanged(Vessel vessel)
 		{
 			KerbalismSituation current_sit = exp_info.GetSituation(vessel);
@@ -54,7 +55,7 @@ namespace KERBALISM
 
 		public long DataSizeForScienceValue(double scienceValue)
 		{
-			return (long)((scienceValue * exp_info.dataScale) / ExperimentInfo.BodyScienceValue(body, situation));
+			return (long)((scienceValue * exp_info.dataScale) / BodyScienceValue());
 		}
 
 		/// <summary>
@@ -66,7 +67,7 @@ namespace KERBALISM
 				size = exp_info.dataSize;
 
 			// get value of the subject
-			return Math.Min(size / exp_info.dataScale * ExperimentInfo.BodyScienceValue(body, situation), exp_info.scienceCap);
+			return Math.Min(size / exp_info.dataScale * BodyScienceValue(), exp_info.scienceCap);
 		}
 
 		/// <summary>
@@ -130,7 +131,7 @@ namespace KERBALISM
 
 			// get already collected subject in RnD
 			ScienceSubject RnD_subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
-			float bodyScienceValue = ExperimentInfo.BodyScienceValue(body, situation);
+			float bodyScienceValue = BodyScienceValue();
 			if (RnD_subject != null && bodyScienceValue > 0)
 			{
 				// substract size of data collected in RnD
@@ -139,6 +140,59 @@ namespace KERBALISM
 
 			if (size < 0) return 0;
 			return size;
+		}
+
+		public float BodyScienceValue()
+		{
+			var values = body.scienceValues;
+
+			switch (situation)
+			{
+				case KerbalismSituation.SrfLanded: return values.LandedDataValue;
+				case KerbalismSituation.SrfSplashed: return values.SplashedDataValue;
+				case KerbalismSituation.FlyingLow: return values.FlyingLowDataValue;
+				case KerbalismSituation.FlyingHigh: return values.FlyingHighDataValue;
+				case KerbalismSituation.InSpaceLow: return values.InSpaceLowDataValue;
+				case KerbalismSituation.InSpaceHigh: return values.FlyingHighDataValue;
+
+				case KerbalismSituation.InnerBelt:
+				case KerbalismSituation.OuterBelt:
+					return 1.3f * Math.Max(values.InSpaceHighDataValue, values.InSpaceLowDataValue);
+
+				case KerbalismSituation.Reentry: return 1.5f * values.FlyingHighDataValue;
+				case KerbalismSituation.Magnetosphere: return 1.1f * values.FlyingHighDataValue;
+				case KerbalismSituation.Interstellar: return 15f * values.InSpaceHighDataValue;
+			}
+
+			Lib.Log("Science: invalid/unknown situation " + situation.ToString());
+			return 0;
+		}
+
+		public override string ToString()
+		{
+			string biomeStr = string.IsNullOrEmpty(biome) ? string.Empty : Lib.BuildString(" ", biome);
+			return Lib.BuildString(
+				exp_info.experimentTitle,
+				" while ",
+				ExperimentInfo.SituationString(situation),
+				" at ",
+				body.displayName,
+				biomeStr);
+		}
+
+
+
+		/// <summary>
+		/// returns  a pretty printed situation description for the UI
+		/// </summary>
+		public static string Situation(string subject_id)
+		{
+			int i = subject_id.IndexOf('@');
+			var situation = subject_id.Length < i + 2
+				? Localizer.Format("#KERBALISM_ExperimentInfo_Unknown")
+				: Lib.SpacesOnCaps(subject_id.Substring(i + 1));
+			situation = situation.Replace("Srf ", string.Empty).Replace("In ", string.Empty);
+			return situation;
 		}
 	}
 }

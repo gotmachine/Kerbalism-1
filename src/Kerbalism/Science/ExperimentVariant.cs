@@ -21,7 +21,6 @@ namespace KERBALISM
 			experiment_desc = Lib.ConfigValue(node, "experiment_desc", string.Empty);
 
 			ec_rate = Lib.ConfigValue(node, "ec_rate", 0.01f);
-			sample_mass = Lib.ConfigValue(node, "sample_mass", 0f);
 			sample_collecting = Lib.ConfigValue(node, "sample_collecting", false);
 			allow_shrouded = Lib.ConfigValue(node, "allow_shrouded", true);
 			requires = Lib.ConfigValue(node, "requires", string.Empty);
@@ -33,26 +32,13 @@ namespace KERBALISM
 			double MBrate = Lib.ConfigValue(node, "data_rate", 0.01);
 			data_rate = Lib.MBToBit(MBrate);
 
-			// get experiment definition
-			// - available even in sandbox
-			try
-			{
-				exp_info = ResearchAndDevelopment.GetExperiment(exp_def_id);
-			}
-			catch (Exception e)
-			{
-				Lib.Log("ERROR: failed to load EXPERIMENT_VARIANT '" + id + "', could not get EXPERIMENT_DEFINITION '" + exp_def_id + "': " + e.Message);
-				throw e;
-			}
+			exp_info = Science.GetExperimentInfo(exp_def_id);
 
 			if (exp_info == null)
 			{
-				Lib.Log("ERROR: failed to load EXPERIMENT_VARIANT '" + id + "', could not get EXPERIMENT_DEFINITION '" + exp_def_id + "'");
+				Lib.Log("ERROR: failed to load EXPERIMENT_VARIANT '" + id + "', could not get EXPERIMENT_INFO '" + exp_def_id + "'");
 				return;
 			}
-
-			// data_max is used everywhere, do the math once and for all
-			data_max = exp_info.baseValue * exp_info.dataScale;
 
 			// parse requirements
 			ParseRequirements();
@@ -61,10 +47,7 @@ namespace KERBALISM
 			ParseResources();
 		}
 
-		public string SubjectName(string subject_id)
-		{
-			return Lib.BuildString(title, " (", Situation(subject_id), ")");
-		}
+
 
 
 
@@ -78,6 +61,8 @@ namespace KERBALISM
 		// That would give us a "during last step, condition was valid for X sec" from which we can return a scalar
 		// Needless to say, depending on the precision of the substeps this could be a huge performance issue
 		// but maybe not too much if only we do this "on demand" and do some smart caching of the substeps
+		// Note that implementing this should be easy because the Orbit class is capable of giving us the position
+		// of everything in the past (up the the last SOI change) or in the future
 		public List<string> TestRequirements(Vessel v)
 		{
 
@@ -369,28 +354,9 @@ namespace KERBALISM
 		#endregion
 		#region static methods
 
-		/// <summary>
-		/// Get experiment id from a full subject id
-		/// </summary>
-		public static string GetExperimentId(string subject_id)
-		{
-			int i = subject_id.IndexOf('@');
-			return i > 0 ? subject_id.Substring(0, i) : subject_id;
-		}
 
-		/// <summary>
-		/// returns  a pretty printed situation description for the UI
-		/// </summary>
-		// TODO : move to ExperimentInfo
-		public static string Situation(string subject_id)
-		{
-			int i = subject_id.IndexOf('@');
-			var situation = subject_id.Length < i + 2
-				? Localizer.Format("#KERBALISM_ExperimentInfo_Unknown")
-				: Lib.SpacesOnCaps(subject_id.Substring(i + 1));
-			situation = situation.Replace("Srf ", string.Empty).Replace("In ", string.Empty);
-			return situation;
-		}
+
+
 
 		#endregion
 

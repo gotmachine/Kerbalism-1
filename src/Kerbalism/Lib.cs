@@ -730,8 +730,13 @@ namespace KERBALISM
 		}
 
 		///<summary> Format data size, the size parameter is in bits </summary>
-		public static string HumanReadableDataSize(long bits)
+		public static string HumanReadableDataSize(long bits, FileType type)
 		{
+			if (type == FileType.Sample)
+			{
+				return HumanReadableSampleSize(bits);
+			}
+
 			if (bits >= 8796093022208)
 				return BuildString(((double)bits / 8796093022208).ToString("F2"), " TB");
 			if (bits >= 8589934592)
@@ -777,7 +782,14 @@ namespace KERBALISM
 			return BuildString(HumanReadableDataSize(BitRate), "/s");
 		}
 
-		public static string HumanReadableSampleSize(long size)
+		public static string HumanReadableSampleSlotAndMass(long bitSize, double massPerBit)
+		{
+			string slots = HumanReadableSampleSlots(SampleSizeToFullSlots(bitSize));
+			string mass = HumanReadableMass(bitSize * massPerBit);
+			return Lib.BuildString(slots, " (", mass, ")");
+		}
+
+			public static string HumanReadableSampleSize(long size)
 		{
 			return HumanReadableSampleSlots(SampleSizeToFullSlots(size));
 		}
@@ -816,6 +828,16 @@ namespace KERBALISM
 		{
 			long result = size / slotSize; 
 			if (result * slotSize < size) ++result;
+			return result;
+		}
+
+		/// <summary>
+		/// size in bit that will be left empty in the last partially filled slot
+		/// </summary>
+		public static long SizeLostBySlotting(long size)
+		{
+			long result = size - ((size / slotSize) * slotSize);
+			result = slotSize - result;
 			return result;
 		}
 
@@ -910,6 +932,18 @@ namespace KERBALISM
 			Vector2d latlong = body.GetLatitudeAndLongitude(pos);
 			Vector3d radial = QuaternionD.AngleAxis(latlong.y, Vector3d.down) * QuaternionD.AngleAxis(latlong.x, Vector3d.forward) * Vector3d.right;
 			return (pos - body.position).magnitude - pqs.GetSurfaceHeight(radial);
+		}
+
+		public static double SunBodyAngle(Vessel v)
+		{
+			// orbit around sun?
+			if (v.mainBody.flightGlobalsIndex == 0)
+				return 0;
+
+			var body_vessel = v.mainBody.position - Lib.VesselPosition(v);
+			var body_sun = v.mainBody.position - FlightGlobals.Bodies[0].position;
+			double angle_rad = Vector3d.Angle(body_vessel, body_sun);
+			return angle_rad * 180.0 / Math.PI;
 		}
 
 
@@ -1622,8 +1656,8 @@ namespace KERBALISM
 			// our own science system
 			else
 			{
-				foreach (var drive in Drive.GetDrives(v, true))
-					if (drive.files.Count > 0) return true;
+				foreach (var drive in Drive.GetDrives(v))
+					if (drive.Count > 0) return true;
 				return false;
 			}
 		}
@@ -1669,21 +1703,12 @@ namespace KERBALISM
 			else
 			{
 				// select a file at random and remove it
-				foreach (var drive in Drive.GetDrives(v, true))
+				foreach (var drive in Drive.GetDrives(v))
 				{
-					if (drive.files.Count > 0) //< it should always be the case
+					if (drive.Count > 0) //< it should always be the case
 					{
-						string filename = string.Empty;
-						int i = Lib.RandomInt(drive.files.Count);
-						foreach (var pair in drive.files)
-						{
-							if (i-- == 0)
-							{
-								filename = pair.Key;
-								break;
-							}
-						}
-						drive.Delete_file(filename);
+						int i = Lib.RandomInt(drive.Count);
+						drive[i].Delete();
 						break;
 					}
 				}

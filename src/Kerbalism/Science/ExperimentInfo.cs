@@ -107,13 +107,13 @@ namespace KERBALISM
 			return result;
 		}
 
+
+
 		/// <summary>
 		/// The KSP stock function has the nasty habit of returning, on occasion,
 		/// situations that should not exist (flying high/low with bodies that
 		/// don't have atmosphere), so we have to force the situations a bit.
 		/// </summary>
-		/// 		
-
 		public KerbalismSituation GetSituation(Vessel vessel)
 		{
 			
@@ -162,25 +162,7 @@ namespace KERBALISM
 
 		public override string ToString()
 		{
-			return sit.ToString();
-		}
-
-
-
-		internal bool IsAvailable(ScienceExperiment exp)
-		{
-			return exp.IsAvailableWhile(sit, vessel.mainBody);
-		}
-
-		internal bool IsAvailable()
-		{
-			// make sure to not supersede SpaceHigh with our custom situations, otherwise
-			// those experiments won't run any more while in space high and in a belt
-			var s = sit;
-			if ((situationMask & (int)s) != 0) return true;
-
-			if (s >= KerbalismSituation.InnerBelt) s = KerbalismSituation.InSpaceHigh;
-			return (situationMask & (int)s) != 0;
+			return experimentTitle;
 		}
 
 		public bool IsAvailable(KerbalismSituation situation)
@@ -194,32 +176,6 @@ namespace KERBALISM
 			return ((int)biomeMask & (int)situation) != 0;
 		}
 
-		public static float BodyScienceValue(CelestialBody body, KerbalismSituation situation)
-		{
-			var values = body.scienceValues;
-
-			switch (situation)
-			{
-				case KerbalismSituation.SrfLanded: return values.LandedDataValue;
-				case KerbalismSituation.SrfSplashed: return values.SplashedDataValue;
-				case KerbalismSituation.FlyingLow: return values.FlyingLowDataValue;
-				case KerbalismSituation.FlyingHigh: return values.FlyingHighDataValue;
-				case KerbalismSituation.InSpaceLow: return values.InSpaceLowDataValue;
-				case KerbalismSituation.InSpaceHigh: return values.FlyingHighDataValue;
-
-				case KerbalismSituation.InnerBelt:
-				case KerbalismSituation.OuterBelt:
-					return 1.3f * Math.Max(values.InSpaceHighDataValue, values.InSpaceLowDataValue);
-
-				case KerbalismSituation.Reentry: return 1.5f * values.FlyingHighDataValue;
-				case KerbalismSituation.Magnetosphere: return 1.1f * values.FlyingHighDataValue;
-				case KerbalismSituation.Interstellar: return 15f * values.InSpaceHighDataValue;
-			}
-
-			Lib.Log("Science: invalid/unknown situation " + situation.ToString());
-			return 0;
-		}
-
 		private static KerbalismSituation StockSituation(KerbalismSituation s)
 		{
 			if (s < KerbalismSituation.InnerBelt)
@@ -229,6 +185,25 @@ namespace KERBALISM
 				return KerbalismSituation.FlyingHigh;
 
 			return KerbalismSituation.InSpaceHigh;
+		}
+
+		public static string SituationString(KerbalismSituation situation)
+		{
+			switch (situation)
+			{
+				case KerbalismSituation.SrfLanded: return "landed";
+				case KerbalismSituation.SrfSplashed: return "splashed";
+				case KerbalismSituation.FlyingLow: return "flying low";
+				case KerbalismSituation.FlyingHigh: return "flying high";
+				case KerbalismSituation.InSpaceLow: return "in space low";
+				case KerbalismSituation.InSpaceHigh: return "in space high";
+				case KerbalismSituation.InnerBelt: return "in inner belt";
+				case KerbalismSituation.OuterBelt: return "in outer belt";
+				case KerbalismSituation.Reentry: return "reentrying";
+				case KerbalismSituation.Magnetosphere: return "in magnetopause";
+				case KerbalismSituation.Interstellar: return "in interstellar space";
+				default: return string.Empty;
+			}
 		}
 	}
 }

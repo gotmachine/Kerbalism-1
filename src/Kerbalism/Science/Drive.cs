@@ -1,581 +1,234 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
-using UnityEngine;
-using KSP.Localization;
+using System.Linq;
+using System.Text;
 
 namespace KERBALISM
 {
 
-	public sealed class Drive
+	public enum FileType
 	{
-		public Drive(string name, double dataCapacity, int sampleCapacity)
+		File, Sample
+	}
+
+
+	// drive is now a list. reasons:
+	// - to keep it a dictionary and managing duplicates, we would need a dictionary<key, list<value>>, this complicate code a lot
+	// - most of the time, drives are empty or containing only a couple of files
+	// - we sometimes find by key but not that much
+	// - finding by key in dictionary containing less than 3-4 elements is slower than iterating over a list
+	// - we very often iterate over the whole drive content, iterating over a dictionary is slow and garbagey
+
+	/// <summary>
+	/// drive is a list of ExperimentResult with specific handling when calling the usual List methods
+	/// </summary>
+	public class Drive : IList<ExperimentResult>
+	{
+		/// <summary>file capacity in bits</summary>
+		public long fileCapacity;
+		/// <summary>sample capacity in slots</summary>
+		public long sampleCapacity;
+		public string name = string.Empty; // TODO : what is this used for ?
+		public bool is_private = false;
+
+		private List<ExperimentResult> results;
+
+		public Drive(string title, long dataCapacity, long sampleCapacity);
+
+		public Drive(ConfigNode node, string version)
 		{
-			this.files = new Dictionary<string, File>();
-			this.samples = new Dictionary<string, Sample>();
-			this.fileSendFlags = new Dictionary<string, bool>();
-			this.dataCapacity = dataCapacity;
-			this.sampleCapacity = sampleCapacity;
-			this.name = name;
-		}
-
-		public Drive() : this("Brick", 0, 0) { }
-
-		public Drive(ConfigNode node)
-		{
-			// parse drive data
-			driveData = new ExperimentDictionary();
-			if (node.HasNode("driveData"))
-			{
-				foreach (var data_node in node.GetNode("driveData").GetNodes())
-					driveData.AddData(data_node);
-			}
-
-			name = Lib.ConfigValue(node, "name", "DRIVE");
 			is_private = Lib.ConfigValue(node, "is_private", false);
+			sampleCapacity = Lib.ConfigValue(node, "sampleCapacity", -1L);
+			fileCapacity = Lib.ConfigValue(node, "fileCapacity", -1L);
 
-			// parse capacities. be generous with default values for backwards
-			// compatibility (drives had unlimited storage before this)
-			dataCapacity = Lib.ConfigValue(node, "dataCapacity", 100000.0);
-			sampleCapacity = Lib.ConfigValue(node, "sampleCapacity", 1000);
-
-			// Backward compatibility (3.0-alpha-12 and older)
-			if (node.HasNode("files"))
+			// load results
+			foreach (var resNode in node.GetNodes())
 			{
-				foreach (var file_node in node.GetNode("files").GetNodes())
-				{
-					ExperimentResult expData = new ExperimentResult(node);
-					if (ContainsKey(DB.From_safe_key(node.name)))
-						this[DB.From_safe_key(node.name)].Add(expData);
-					else
-						Add(DB.From_safe_key(node.name), new List<ExperimentResult> { expData });
-
-
-					driveData.AddData(data_node);
-
-					files.Add(DB.From_safe_key(file_node.name), new File(file_node));
-				}
+				new ExperimentResult(this, resNode);
 			}
-			// parse science samples
-			//samples = new Dictionary<string, Sample>();
-			if (node.HasNode("samples"))
+
+			// migration of pre-2.3 saves
+			if (string.CompareOrdinal(version, "2.3.0.0") < 0)
 			{
-				foreach (var sample_node in node.GetNode("samples").GetNodes())
+				// dataCapacity was a double in MB, it is now a long in bit
+				fileCapacity = Lib.MBToBit(Lib.ConfigValue(node, "dataCapacity", -1.0));
+
+				// parse files to ExperimentResult
+				if (node.HasNode("files"))
 				{
-					samples.Add(DB.From_safe_key(sample_node.name), new Sample(sample_node));
+					foreach (var file_node in node.GetNode("files").GetNodes())
+					{
+						string subject_id = DB.From_safe_key(file_node.name);
+						string title = subject_id;
+						long size = Lib.ConfigValue(node, "size", 0);
+						if (size < 0) continue;
+						long maxSize = 0;
+						ExperimentInfo expInfo = Science.GetExperimentInfoFromSubject(subject_id);
+						if (expInfo != null)
+						{
+							maxSize = expInfo.dataSize;
+							title = expInfo.experimentTitle;
+						}
+						new ExperimentResult(this, FileType.File, subject_id, title, size, maxSize);
+					}
 				}
-			}
-			fileSendFlags = new Dictionary<string, bool>();
-			var fileNames = Lib.ConfigValue(node, "sendFileNames", string.Empty);
-			foreach (var fileName in Lib.Tokenize(fileNames, ','))
-			{
-				Send(fileName, true);
+
+				// parse samples to ExperimentResult
+				if (node.HasNode("samples"))
+				{
+					foreach (var file_node in node.GetNode("samples").GetNodes())
+					{
+						string subject_id = DB.From_safe_key(file_node.name);
+						string title = subject_id;
+						long size = Lib.ConfigValue(node, "size", 0);
+						if (size < 0) continue;
+						double massPerBit = Lib.ConfigValue(node, "mass", 0.0) / size;
+
+						long maxSize = 0;
+						ExperimentInfo expInfo = Science.GetExperimentInfoFromSubject(subject_id);
+						if (expInfo != null)
+						{
+							maxSize = expInfo.dataSize;
+							title = expInfo.experimentTitle;
+							if (massPerBit < double.Epsilon) massPerBit = expInfo.massPerBit;
+						}
+						new ExperimentResult(this, FileType.Sample, subject_id, title, size, maxSize, massPerBit);
+					}
+				}
 			}
 		}
 
 		public void Save(ConfigNode node)
 		{
-			// save science files
-			var files_node = node.AddNode("files");
-			foreach (var p in files)
-			{
-				p.Value.Save(files_node.AddNode(DB.To_safe_key(p.Key)));
-			}
-
-			// save science samples
-			var samples_node = node.AddNode("samples");
-			foreach (var p in samples)
-			{
-				p.Value.Save(samples_node.AddNode(DB.To_safe_key(p.Key)));
-			}
-
-			node.AddValue("name", name);
 			node.AddValue("is_private", is_private);
-			node.AddValue("dataCapacity", dataCapacity);
 			node.AddValue("sampleCapacity", sampleCapacity);
+			node.AddValue("fileCapacity", fileCapacity);
 
-			string fileNames = string.Empty;
-			foreach (var fileName in fileSendFlags.Keys)
+			// save results
+			foreach (var result in results)
 			{
-				if (fileNames.Length > 0) fileNames += ",";
-				fileNames += fileName;
+				result.Save(node.AddNode("result"));
 			}
-			node.AddValue("sendFileNames", fileNames);
 		}
 
-		// add science data, creating new file or incrementing existing one
-		public bool Record_file(string subject_id, double amount, bool allowImmediateTransmission = true)
+
+
+		/// <summary>
+		/// get available drive space in bits (file) or slots (sample)
+		/// </summary>
+		public long CapacityAvailable(FileType type)
 		{
-			if (dataCapacity >= 0 && FilesSize() + amount > dataCapacity)
-				return false;
-
-			// create new data or get existing one
-			File file;
-			if (!files.TryGetValue(subject_id, out file))
+			switch (type)
 			{
-				file = new File();
-				file.ts = Planetarium.GetUniversalTime();
-				files.Add(subject_id, file);
-
-				if (!allowImmediateTransmission) Send(subject_id, false);
+				case FileType.File:
+					if (fileCapacity < 0) return long.MaxValue;
+					return fileCapacity - CapacityUsed(type);
+				case FileType.Sample:
+					if (sampleCapacity < 0) return long.MaxValue;
+					return sampleCapacity - CapacityUsed(type);
 			}
+			return 0;
+		}
 
-			// increase amount of data stored in the file
-			file.size += amount;
 
-			// clamp file size to max amount that can be collected and correct the amount
-			if (file.size > Science.Experiment(subject_id).data_max)
+		/// <summary>
+		/// get used drive file space in bits (file) or slots (sample)
+		/// </summary>
+		public long CapacityUsed(FileType type)
+		{
+			long amount = 0;
+
+			for (int i = 0; i < Count; i++)
 			{
-				amount -= file.size - Science.Experiment(subject_id).data_max;
-				file.size = Science.Experiment(subject_id).data_max;
-			}
-
-			// update the experiment cache
-			Science.AddStoredData(subject_id, amount);
-
-			if (file.size > Science.min_file_size / 3)
-				file.ts = Planetarium.GetUniversalTime();
-
-			return true;
-		}
-
-		public void Send(string filename, bool send)
-		{
-			if (!fileSendFlags.ContainsKey(filename)) fileSendFlags.Add(filename, send);
-			else fileSendFlags[filename] = send;
-		}
-
-		public bool GetFileSend(string filename)
-		{
-			if (!fileSendFlags.ContainsKey(filename)) return PreferencesScience.Instance.transmitScience;
-			return fileSendFlags[filename];
-		}
-
-		// add science sample, creating new sample or incrementing existing one
-		public bool Record_sample(string subject_id, double amount, double mass)
-		{
-			int currentSampleSlots = SamplesSize();
-			if (sampleCapacity >= 0)
-			{
-				if (!samples.ContainsKey(subject_id) && currentSampleSlots >= sampleCapacity)
+				if (this[i].type == type)
 				{
-					// can't take a new sample if we're already at capacity
-					return false;
-				}
-			}
-
-			Sample sample;
-			if (samples.ContainsKey(subject_id) && sampleCapacity >= 0)
-			{
-				// test if adding the amount to the sample would exceed our capacity
-				sample = samples[subject_id];
-
-				int existingSampleSlots = Lib.SampleSizeToFullSlots(sample.size);
-				int newSampleSlots = Lib.SampleSizeToFullSlots(sample.size + amount);
-				if (currentSampleSlots - existingSampleSlots + newSampleSlots > sampleCapacity)
-					return false;
-			}
-
-			// create new data or get existing one
-			if (!samples.TryGetValue(subject_id, out sample))
-			{
-				sample = new Sample();
-				sample.analyze = PreferencesScience.Instance.analyzeSamples;
-				samples.Add(subject_id, sample);
-			}
-
-			// increase amount of data stored in the sample,
-			// but clamp file size to max amount that can be collected
-			var maxSize = Science.Experiment(subject_id).data_max;
-			var sizeDelta = maxSize - sample.size;
-			if (sizeDelta >= amount)
-			{
-				sample.size += amount;
-				sample.mass += mass;
-				Science.AddStoredData(subject_id, amount); // update the experiment cache
-			}
-			else
-			{
-				sample.size += sizeDelta;
-
-				var f = sizeDelta / amount; // how much of the desired amount can we add
-				sample.mass += mass * f; // add the proportional amount of mass
-				Science.AddStoredData(subject_id, sizeDelta); // update the experiment cache
-			}
-			return true;
-		}
-
-		// remove science data, deleting the file when it is empty
-		public void Delete_file(string subject_id, double amount)
-		{
-			// get data
-			File file;
-			if (files.TryGetValue(subject_id, out file))
-			{
-				// decrease amount of data stored in the file
-				if (file.size > amount)
-				{
-					file.size -= amount;
-					file.ts = Planetarium.GetUniversalTime();
-				}
-				// remove file if empty
-				else
-				{
-					amount = file.size;
-					files.Remove(subject_id);
-				}
-				// update the experiment cache
-				Science.RemoveStoredData(subject_id, amount);
-			}
-		}
-
-		// remove science data
-		public void Delete_file(string subject_id)
-		{
-			// get data
-			File file;
-			if (files.TryGetValue(subject_id, out file))
-			{
-				// update the experiment cache
-				Science.RemoveStoredData(subject_id, file.size);
-				// remove file
-				files.Remove(subject_id);
-			}
-		}
-
-		// remove science sample, deleting the sample when it is empty
-		public double Delete_sample(string subject_id, double amount)
-		{
-			// get data
-			Sample sample;
-			if (samples.TryGetValue(subject_id, out sample))
-			{
-				// decrease amount of data stored in the sample
-				amount = Math.Min(amount, sample.size);
-				double massDelta = sample.mass * amount / sample.size;
-				sample.size -= amount;
-				sample.mass -= massDelta;
-
-				// remove sample if empty
-				if (sample.size <= double.Epsilon) samples.Remove(subject_id);
-
-				// update the experiment cache
-				Science.RemoveStoredData(subject_id, amount);
-
-				return massDelta;
-			}
-			return 0.0;
-		}
-
-		// remove science sample
-		public double Delete_sample(string subject_id)
-		{
-			// get data
-			Sample sample;
-			if (samples.TryGetValue(subject_id, out sample))
-			{
-				double massDelta = sample.size;
-				// update the experiment cache
-				Science.RemoveStoredData(subject_id, sample.size);
-				// remove sample
-				samples.Remove(subject_id);
-				return massDelta;
-			}
-			return 0.0;
-		}
-
-		// set analyze flag for a sample
-		public void Analyze(string subject_id, bool b)
-		{
-			Sample sample;
-			if (samples.TryGetValue(subject_id, out sample))
-			{
-				sample.analyze = b;
-			}
-		}
-
-		// move all data to another drive
-		public bool Move(Drive destination, bool moveSamples)
-		{
-			bool result = true;
-
-			// copy files
-			var filesList = new List<string>();
-			foreach (var p in files)
-			{
-				double size = Math.Max(p.Value.size, destination.FileCapacityAvailable());
-				if (destination.Record_file(p.Key, size, true))
-				{
-					destination.files[p.Key].buff += p.Value.buff; //< move the buffer along with the size
-					p.Value.buff = 0;
-					p.Value.size -= size;
-					if (p.Value.size < double.Epsilon)
+					switch (type)
 					{
-						filesList.Add(p.Key);
+
+						case FileType.File:
+							amount += this[i].size;
+							break;
+						case FileType.Sample:
+							amount += Lib.SampleSizeToFullSlots(this[i].size);
+							break;
 					}
-					else
-					{
-						result = false;
-						break;
-					}
-				}
-				else
-				{
-					result = false;
-					break;
-				}
-			}
-			foreach (var id in filesList) files.Remove(id);
-
-			if (!moveSamples) return result;
-
-			// move samples
-			var samplesList = new List<string>();
-			foreach (var p in samples)
-			{
-				double size = Math.Min(p.Value.size, destination.SampleCapacityAvailable(p.Key));
-				if (size < double.Epsilon)
-				{
-					result = false;
-					break;
-				}
-
-				double mass = p.Value.mass * (p.Value.size / size);
-				if (destination.Record_sample(p.Key, size, mass))
-				{
-					p.Value.size -= size;
-					p.Value.mass -= mass;
-					p.Value.size = Math.Max(0, p.Value.size);
-					p.Value.mass = Math.Max(0, p.Value.mass);
-
-					if (p.Value.size < double.Epsilon)
-					{
-						samplesList.Add(p.Key);
-					}
-					else
-					{
-						result = false;
-						break;
-					}
-				}
-				else
-				{
-					result = false;
-					break;
-				}
-			}
-			foreach (var id in samplesList) samples.Remove(id);
-
-			return result; // true if everything was moved, false otherwise
-		}
-
-		public double FileCapacityAvailable()
-		{
-			if (dataCapacity < 0) return double.MaxValue;
-			return dataCapacity - FilesSize();
-		}
-
-		public double FilesSize()
-		{
-			double amount = 0.0;
-			foreach (var p in files)
-			{
-				amount += p.Value.size;
+				}	
 			}
 			return amount;
 		}
 
-		public double SampleCapacityAvailable(string filename = "")
-		{
-			if (sampleCapacity < 0) return double.MaxValue;
 
-			double result = Lib.SlotsToSampleSize(sampleCapacity - SamplesSize());
-			if (samples.ContainsKey(filename))
-			{
-				int slotsForMyFile = Lib.SampleSizeToFullSlots(samples[filename].size);
-				double amountLostToSlotting = Lib.SlotsToSampleSize(slotsForMyFile) - samples[filename].size;
-				result += amountLostToSlotting;
-			}
-			return result;
+		public static Drive GetDrive(uint HdId)
+		{
+			if (DB.drives.ContainsKey(HdId)) return DB.drives[HdId];
+			return null;
 		}
 
-		public int SamplesSize()
+		/// <summary>
+		/// Return the drive with the most available space for the given "type"
+		/// or null if no drive with at least "minCapacity" is found. Private drives are ignored.
+		/// </summary>
+		/// <param name="minCapacity">in bits for files, in slots for samples</param>
+		/// <param name="privateHdId">if != 0, only check for the drive with the specified ID</param>
+		public static Drive GetDriveBestCapacity(Vessel vessel, FileType type, long minCapacity = 1, uint privateHdId = 0)
 		{
-			int amount = 0;
-			foreach (var p in samples)
+			Drive bestDrive = null;
+			long bestDriveCapacity = 0;
+
+			if (privateHdId != 0)
 			{
-				amount += Lib.SampleSizeToFullSlots(p.Value.size);
+				bestDrive = GetDrive(privateHdId);
+				if (bestDrive != null) bestDriveCapacity = bestDrive.CapacityAvailable(type);
 			}
-			return amount;
-		}
-
-		//// return size of data stored in Mb (including samples)
-		//public string Size()
-		//{
-		//	var f = FilesSize();
-		//	var s = SamplesSize();
-		//	var result = f > double.Epsilon ? Lib.HumanReadableDataSize(f) : "";
-		//	if (result.Length > 0) result += " ";
-		//	if (s > 0) result += Lib.HumanReadableSampleSize(s);
-		//	return result;
-		//}
-
-		public bool Empty()
-		{
-			return files.Count + samples.Count == 0;
-		}
-
-		// transfer data from a vessel to a drive
-		public static bool Transfer(Vessel src, Drive dst, bool samples)
-		{
-			double dataAmount = 0.0;
-			int sampleSlots = 0;
-			foreach (var drive in GetDrives(src, true))
-			{
-				dataAmount += drive.FilesSize();
-				sampleSlots += drive.SamplesSize();
-			}
-
-			if (dataAmount < double.Epsilon && (sampleSlots == 0 || !samples))
-				return true;
-
-			// get drives
-			var allSrc = GetDrives(src, true);
-
-			bool allMoved = true;
-			foreach (var a in allSrc)
-			{
-				if (a.Move(dst, samples))
-				{
-					allMoved = true;
-					break;
-				}
-			}
-
-			return allMoved;
-		}
-
-		// transfer data from a drive to a vessel
-		public static bool Transfer(Drive drive, Vessel dst, bool samples)
-		{
-			double dataAmount = drive.FilesSize();
-			int sampleSlots = drive.SamplesSize();
-
-			if (dataAmount < double.Epsilon && (sampleSlots == 0 || !samples))
-				return true;
-
-			// get drives
-			var allDst = GetDrives(dst);
-
-			bool allMoved = true;
-			foreach (var b in allDst)
-			{
-				if (drive.Move(b, samples))
-				{
-					allMoved = true;
-					break;
-				}
-			}
-
-			return allMoved;
-		}
-
-		// transfer data between two vessels
-		public static void Transfer(Vessel src, Vessel dst, bool samples)
-		{
-			double dataAmount = 0.0;
-			int sampleSlots = 0;
-			foreach (var drive in GetDrives(src, true))
-			{
-				dataAmount += drive.FilesSize();
-				sampleSlots += drive.SamplesSize();
-			}
-
-			if (dataAmount < double.Epsilon && (sampleSlots == 0 || !samples))
-				return;
-
-			var allSrc = GetDrives(src, true);
-			bool allMoved = false;
-			foreach (var a in allSrc)
-			{
-				if (Transfer(a, dst, samples))
-				{
-					allMoved = true;
-					break;
-				}
-			}
-
-			// inform the user
-			if (allMoved)
-				Message.Post
-				(
-					Lib.HumanReadableDataSize(dataAmount) + " " + Localizer.Format("#KERBALISM_Science_ofdatatransfer"),
-				 	Lib.BuildString(Localizer.Format("#KERBALISM_Generic_FROM"), " <b>", src.vesselName, "</b> ", Localizer.Format("#KERBALISM_Generic_TO"), " <b>", dst.vesselName, "</b>")
-				);
 			else
-				Message.Post
-				(
-					Lib.Color("red", Lib.BuildString("WARNING: not evering copied"), true),
-					Lib.BuildString(Localizer.Format("#KERBALISM_Generic_FROM"), " <b>", src.vesselName, "</b> ", Localizer.Format("#KERBALISM_Generic_TO"), " <b>", dst.vesselName, "</b>")
-				);
-		}
-
-		public static void Purge(ProtoVessel proto_vessel)
-		{
-			foreach (ProtoPartSnapshot p in proto_vessel.protoPartSnapshots)
 			{
-				if (DB.drives.ContainsKey(p.flightID))
+				foreach (Drive drive in GetDrives(vessel))
 				{
-					Science.ClearStoredDataInDrive(DB.drives[p.flightID]);
-					DB.drives.Remove(p.flightID);
+					if (drive.is_private) continue;
+
+					if (bestDrive == null)
+					{
+						bestDrive = drive;
+						bestDriveCapacity = drive.CapacityAvailable(type);
+						continue;
+					}
+
+					long driveCapacity = drive.CapacityAvailable(type);
+					if (driveCapacity > bestDriveCapacity)
+					{
+						bestDrive = drive;
+						bestDriveCapacity = driveCapacity;
+					}
 				}
 			}
+
+			if (bestDriveCapacity < minCapacity) return null;
+			return bestDrive;
 		}
 
-		public static List<Drive> GetDrives(ProtoVessel proto_vessel)
+		public static List<Drive> GetDrives(Vessel vessel)
 		{
-			List<Drive> result = new List<Drive>();
-
-			foreach (var hd in proto_vessel.protoPartSnapshots)
-			{
-				if (DB.drives.ContainsKey(hd.flightID))
-					result.Add(DB.drives[hd.flightID]);
-			}
-
-			return result;
-		}
-
-		public static void Purge(Vessel vessel)
-		{
-			foreach (var id in GetDriveParts(vessel).Keys)
-			{
-				Science.ClearStoredDataInDrive(DB.drives[id]);
-				DB.drives.Remove(id);
-			}
-
-		}
-
-		public static Dictionary<uint, Drive> GetDriveParts(Vessel vessel)
-		{
-			Dictionary<uint, Drive> result = Cache.VesselObjectsCache<Dictionary<uint, Drive>>(vessel, "drives");
+			List<Drive> result = Cache.VesselObjectsCache<List<Drive>>(vessel, "drives");
 			if (result != null)
 				return result;
 
-			result = new Dictionary<uint, Drive>();
+			result = new List<Drive>();
 
 			if (vessel.loaded)
 			{
-				foreach (var hd in vessel.FindPartModulesImplementing<HardDrive>())
+				for (int i = 0; i < vessel.parts.Count; i++)
 				{
-					if (DB.drives.ContainsKey(hd.part.flightID))
-						result.Add(hd.part.flightID, DB.drives[hd.part.flightID]);
+					if (DB.drives.ContainsKey(vessel.parts[i].flightID))
+						result.Add(DB.drives[vessel.parts[i].flightID]);
 				}
 			}
 			else
 			{
-				foreach (var hd in vessel.protoVessel.protoPartSnapshots)
+				for (int i = 0; i < vessel.protoVessel.protoPartSnapshots.Count; i++)
 				{
-					if (DB.drives.ContainsKey(hd.flightID))
-						result.Add(hd.flightID, DB.drives[hd.flightID]);
+					if (DB.drives.ContainsKey(vessel.protoVessel.protoPartSnapshots[i].flightID))
+						result.Add(DB.drives[vessel.protoVessel.protoPartSnapshots[i].flightID]);
 				}
 			}
 
@@ -583,141 +236,280 @@ namespace KERBALISM
 			return result;
 		}
 
-		public static List<Drive> GetDrives(Vessel vessel, bool include_private = false)
+		public List<ExperimentResult> GetResultsById(string subject_id)
 		{
-			List<Drive> result = new List<Drive>();
-			foreach (var d in GetDriveParts(vessel).Values)
+			List<ExperimentResult> results = new List<ExperimentResult>();
+			for (int i = 0; i < Count; i++)
 			{
-				if (!d.is_private || include_private)
-					result.Add(d);
-			}
-			return result;
-		}
-
-		public static void GetCapacity(Vessel vessel, out double free_capacity, out double total_capacity)
-		{
-			free_capacity = 0;
-			total_capacity = 0;
-			if (Features.Science)
-			{
-				foreach (var drive in GetDrives(vessel))
+				if (results[i].subject_id == subject_id)
 				{
-					if (drive.dataCapacity < 0 || free_capacity < 0)
-					{
-						free_capacity = -1;
-					}
-					else
-					{
-						free_capacity += drive.FileCapacityAvailable();
-						total_capacity += drive.dataCapacity;
-					}
-				}
-
-				if (free_capacity < 0)
-				{
-					free_capacity = double.MaxValue;
-					total_capacity = double.MaxValue;
+					results.Add(results[i]);
 				}
 			}
+			return results;
 		}
 
 		/// <summary>
-		/// return the drive where a subject_id file/sample exists already and is complete/can be completed
-		/// if the file can't be completed (drive full) or doesn't exists, return the drive with the most available space.
-		/// "out dataSampled" is the sum of all data stored on all drives of the vessel for this subject_id
+		/// returns size (in bits) available on the drive for this subject_id, including space available in partially filled slots
 		/// </summary>
-		public static Drive GetDriveForSubject(Vessel vessel, string subject_id, bool isFile, out double dataSampled)
+		public long SizeCapacityAvailable(FileType type, string subject_id)
 		{
-			Drive result = null;
-			dataSampled = 0;
-			double subjectMaxAmount = Science.Experiment(subject_id).data_max;
-
-			foreach (var drive in GetDrives(vessel))
+			long capacity = 0;
+			switch (type)
 			{
-				if (subjectMaxAmount > double.Epsilon)
+				case FileType.File: capacity = fileCapacity; break;
+				case FileType.Sample: capacity = sampleCapacity * Lib.slotSize; break;
+			}
+
+			if (capacity < 0) return long.MaxValue;
+
+			for (int i = 0; i < results.Count; i++)
+			{
+				if (results[i].type == type)
 				{
-					if (isFile)
+					switch (type)
 					{
-						if (drive.files.ContainsKey(subject_id))
-						{
-							dataSampled += drive.files[subject_id].size;
-							if (dataSampled < subjectMaxAmount)
-							{
-								// if there is space left on the drive, the current file can be completed
-								// else let's continue to find another drive to complete the data in another file
-								if (drive.FileCapacityAvailable() > 0) return drive;
-							}
+						case FileType.File:
+							capacity -= results[i].size;
+							break;
+						case FileType.Sample:
+							if (results[i].subject_id == subject_id)
+								capacity -= results[i].size + Lib.SizeLostBySlotting(results[i].maxSize);
 							else
-							{
-								// the file exists and is complete
-								return drive;
-							}
-						}
-					}
-					else
-					{
-						if (drive.samples.ContainsKey(subject_id))
-						{
-							dataSampled += drive.samples[subject_id].size;
-							if (dataSampled < subjectMaxAmount)
-							{
-								// if slots are available or the current slot is not full, the current sample can be completed
-								// else let's continue to find another drive to complete the data in another sample
-								if (drive.SampleCapacityAvailable() > 0 || dataSampled % 1024 > 0) return drive;
-							}
-							else
-							{
-								// the sample exists and is complete
-								return drive;
-							}
-						}
+								capacity -= Lib.SampleSizeToFullSlots(this[i].size) * Lib.slotSize;
+							break;
 					}
 				}
-
-				if (result == null)
-				{
-					result = drive;
-					continue;
-				}
-
-				if (isFile ?
-					drive.FileCapacityAvailable() > result.FileCapacityAvailable() :
-					drive.SampleCapacityAvailable() > result.SampleCapacityAvailable())
-				{
-					result = drive;
-				}
 			}
-			return result;
+
+			if (capacity < 0)
+			{
+				Lib.DebugLog("WARNING : a drive is storing more data than its capacity.");
+				capacity = 0;
+			}
+
+			return capacity;
 		}
 
-		public static Drive SampleDrive(Vessel vessel, double size = 0, string filename = "")
+		public static List<ExperimentResult> GetResults(Vessel vessel)
 		{
-			Drive result = null;
+			List<ExperimentResult> results = new List<ExperimentResult>();
 			foreach (var drive in GetDrives(vessel))
 			{
-				if (result == null)
+				for (int i = 0; i < drive.Count; i++)
 				{
-					result = drive;
-					continue;
+					results.Add(drive[i]);
 				}
-
-				double available = drive.SampleCapacityAvailable(filename);
-				if (size > double.Epsilon && available < size)
-					continue;
-				if (available > result.SampleCapacityAvailable(filename))
-					result = drive;
 			}
-			return result;
+			return results;
 		}
 
-		public Dictionary<string, File> files;      // science files
-		public Dictionary<string, Sample> samples;  // science samples
-		public Dictionary<string, bool> fileSendFlags; // file send flags
-		public double dataCapacity;
-		public int sampleCapacity;
-		public string name = String.Empty;
-		public bool is_private = false;
+		public static List<ExperimentResult> GetResults(Vessel vessel, Func<ExperimentResult, bool> predicate)
+		{
+			List<ExperimentResult> results = new List<ExperimentResult>();
+			foreach (var drive in GetDrives(vessel))
+			{
+				results.AddRange(drive.Where(predicate));
+			}
+			return results;
+		}
 
+		// Note : we don't sort the returned results by available drive space to avoid experiements having their active result "shifted" as more data is generated.
+		// But also note that there is not garanty that the result order will stay the same between calls to this method.
+		/// <summary>
+		/// for the given subject_id, return the partial results if they can be completed (drive not full and maxSize not reached)
+		/// <para/> "totalData" always return the sum of all data stored on the vessel for this subject_id
+		/// </summary>
+		public static List<ExperimentResult> FindPartialResults(Vessel vessel, string subject_id, FileType type, uint HdId, out long totalData)
+		{
+			//Drive result = null;
+			totalData = 0;
+			List<Drive> drives = GetDrives(vessel);
+			List<ExperimentResult> results = new List<ExperimentResult>();
+			for (int i = 0; i < drives.Count; i++)
+			{
+				for (int j = 0; j < drives[i].Count; j++)
+				{
+					if (drives[i][j].subject_id != subject_id)
+						continue;
+					if (drives[i][j].type != type)
+						continue;
+
+					totalData += drives[i][j].size;
+
+					if (drives[i][j].size < drives[i][j].maxSize)
+					{
+						// if a private drive is specified, get the result only if it is on the private drive
+						if (HdId != 0 && drives[i] != GetDrive(HdId))
+							continue;
+
+						if (type == FileType.File)
+						{
+							// for files, just check if there is space available
+							if (drives[i].CapacityAvailable(FileType.File) > 0)
+								results.Add(drives[i][j]);
+						}
+						else
+						{
+							// for samples, check if slots are available or if the last used slot is not full
+							if (drives[i].CapacityAvailable(FileType.Sample) > 0 || Lib.SampleSizeFillFullSlots(drives[i][j].size))
+								results.Add(drives[i][j]);
+						}
+						
+					}
+				}
+			}
+
+			return results;
+
+			// we now have the list of results that are incomplete and whose drive isn't full
+			// at most this list contains 2 results -> WRONG IN MANY CASES. if it is the case :
+			// - one result is part of a complete subject splitted amongst multiple drives
+			// - the other is the partial result we seek for
+			//switch (results.Count)
+			//{
+			//	case 0: return null;
+			//	case 1: return results[0];
+			//	default:
+			//		if (totalData - ((totalData / results[0].maxSize) * results[0].maxSize) == results[0].size)
+			//			return results[1];
+			//		else
+			//			return results[0];
+			//}
+		}
+
+		/// <summary>
+		/// for the given subject_id, return the first found partial result that can be completed (drive not full and maxSize not reached),
+		/// return null if no result was found
+		/// <para/> "totalData" always return the sum of all data stored on the vessel for this subject_id
+		/// </summary>
+		public static ExperimentResult FindPartialResult(Vessel vessel, string subject_id, FileType type, uint HdId, out long totalData)
+		{
+			return FindPartialResults(vessel, subject_id, type, HdId, out totalData).FirstOrDefault();
+		}
+
+		#region IList implementation
+
+		// interface methods directy wrapped to the private list
+		public bool IsReadOnly => ((IList<ExperimentResult>)results).IsReadOnly;
+		public IEnumerator<ExperimentResult> GetEnumerator() { return results.GetEnumerator(); }
+		IEnumerator IEnumerable.GetEnumerator() { return results.GetEnumerator(); }
+		public int Count => results.Count;
+		public ExperimentResult this[int index] { get => results[index]; set => results[index] = value; }
+		public int IndexOf(ExperimentResult item) { return results.IndexOf(item); }
+		public bool Contains(ExperimentResult item) { return results.Contains(item); }
+
+		/// <summary>
+		/// utility method for transferring results between drives in Add() or Insert() IList methods
+		/// </summary>
+		/// <param name="index">if >= 0, the new result will be insered at index instead of added</param>
+		private void TransferResult(ExperimentResult result, int index = -1)
+		{
+			// get exact available space in this drive
+			long spaceAvailable = SizeCapacityAvailable(result.type, result.subject_id);
+			if (spaceAvailable == 0) return;
+
+			// clamp transferred amount to available space
+			long sizeTransfered = Math.Min(spaceAvailable, result.size);
+
+			// update the old result
+			result.size -= sizeTransfered;
+			if (result.size == 0) result.Delete();
+
+			// get partial results that can be completed
+			foreach (ExperimentResult pr in results.FindAll(
+				p => p.subject_id == result.subject_id
+				&& p.type == result.type
+				&& p.size < p.maxSize))
+			{
+				long toTransfer = Math.Min(sizeTransfered, pr.maxSize - pr.size);
+				sizeTransfered -= toTransfer;
+				pr.size += toTransfer;
+			}
+
+			// if that wasn't enough, create a new result
+			if (sizeTransfered > 0)
+				new ExperimentResult(this, result, sizeTransfered, index);
+		}
+
+
+		/// <summary>if "result" is on another drive, it will be transfered to this drive.
+		/// <para/>if there is not enough available space, the result will be partially transferred and the old result with the remaining size will remain on its drive.
+		/// <para/>results that have the same "subject_id" will be merged according to their max size
+		/// <para/>Be aware that this will create a new ExperimentResult object, not "change the drive" of the provided ExperimentResult
+		/// </summary>
+		public void Add(ExperimentResult result)
+		{
+			// the same result can't be added twice
+			if (results.Contains(result)) return;
+
+			// if the result drive is this one, Add() was called from the result ctor and this is a new result for this drive
+			if (result.GetDrive == this)
+			{
+				results.Add(result);
+				return;
+			}
+
+			// else we are transferring the result from another drive
+			TransferResult(result);
+		}
+
+		/// <summary>if "result" is on another drive, it will be transfered to this drive.
+		/// <para/>if there is not enough available space, the result will be partially transferred and the old result with the remaining size will not be deleted.
+		/// <para/>results that have the same "subject_id" will be merged according to their max size
+		/// <para/>Be aware that this will create a new ExperimentResult object, not "change the drive" of the provided ExperimentResult
+		/// </summary>
+		public void Insert(int index, ExperimentResult result)
+		{
+			// the same result can't be added twice
+			if (results.Contains(result)) return;
+
+			// if the result drive is this one, Insert() was called from the result ctor and this is a new result for this drive
+			if (result.GetDrive == this)
+			{
+				results.Insert(index, result);
+				return;
+			}
+
+			// else we are transferring the result from another drive
+			TransferResult(result, index);
+		}
+
+		public bool Remove(ExperimentResult result)
+		{
+			if (results.Remove(result))
+			{
+				result.DeleteDriveRef();
+				return true;
+			}
+			return false;
+		}
+
+		public void RemoveAt(int index)
+		{
+			if (index < results.Count)
+				results[index].DeleteDriveRef();
+
+			results.RemoveAt(index);
+		}
+
+		public void Clear()
+		{
+			for (int i = 0; i < results.Count; i++)
+			{
+				results[i].DeleteDriveRef();
+			}
+			results.Clear();
+		}
+
+		/// <summary>
+		/// drive specific logic not implemented,
+		/// do not use for transferring results between drives, use Add() or Insert() instead
+		/// </summary>
+		public void CopyTo(ExperimentResult[] array, int arrayIndex)
+		{
+			results.CopyTo(array, arrayIndex);
+		}
+		#endregion
 	}
-} // KERBALISM
-
+}

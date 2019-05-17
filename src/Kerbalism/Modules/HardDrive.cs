@@ -36,7 +36,7 @@ namespace KERBALISM
 			if(drive == null)
 			{
 				if (!Lib.IsFlight())
-					drive = new Drive(title, dataCapacity, sampleCapacity);
+					drive = new Drive(title, dataCapacity, sampleCapacity); // Why do we need a drive in the editor ?
 				else
 					drive = DB.Drive(hdId, title, dataCapacity, sampleCapacity);
 			}
@@ -276,58 +276,98 @@ namespace KERBALISM
 			return Specs().Info();
 		}
 
+		#region IScienceDataContainer implementation (stock interface)
 
-		// science container implementation
+		// Note on this : while the interface technically work, it is very likely that using it will lead to weird behavior
+		// Currently, in a stock game, the interface will never be used.
+		// It's purpose is to allow compatibility with mods that use the stock experiment module.
+		// But mods that implement custom modules that try to manipulate to stock science data will probably cause issues.
+
+		// Also, note on EVA / limited capacity : there is no way to abort a boarding event once it has been initiated
+		// Boarding can be disabled by setting HighLogic.CurrentGame.Parameters.Flight.CanBoard to false, but that doesn't help
+		// What we can do instead is to get the protected "KerbalEVA.currentAirlockPart" property on the EVA partmodule,
+		// when it's not null, that mean that the "[press B to board]" indication is shown and the player can board
+		// What we can do is that while not null, if data capacity isn't enough, post a warning message at regular interval
+
 		public ScienceData[] GetData()
 		{
 			// generate and return stock science data
 			List<ScienceData> data = new List<ScienceData>();
-			foreach (var pair in drive.files)
+			for (int i = 0; i < drive.Count; i++)
 			{
-				File file = pair.Value;
-				var exp = Science.Experiment(pair.Key);
-				data.Add(new ScienceData((float)file.size, 1.0f, 1.0f, pair.Key, exp.FullName(pair.Key)));
-			}
-			foreach (var pair in drive.samples)
-			{
-				Sample sample = pair.Value;
-				var exp = Science.Experiment(pair.Key);
-				data.Add(new ScienceData((float)sample.size, 0.0f, 0.0f, pair.Key, exp.FullName(pair.Key)));
+				float xmitScalar = drive[i].type == FileType.File ? 1f : 0f;
+				data.Add(new ScienceData((float)Lib.BitToMB(drive[i].size), xmitScalar, xmitScalar, drive[i].subject_id, drive[i].title));
 			}
 			return data.ToArray();
 		}
 
-		// TODO do something about limited capacity...
-		// EVAs returning should get a warning if needed
 		public void ReturnData(ScienceData data)
 		{
-			// store the data
-			bool result = false;
-			if (data.baseTransmitValue > float.Epsilon || data.transmitBonus > double.Epsilon)
-			{
-				result = drive.Record_file(data.subjectID, data.dataAmount);
-			}
-			else
-			{
-				var experimentInfo = Science.Experiment(data.subjectID);
-				var sampleMass = Science.GetSampleMass(data.subjectID);
-				var mass = sampleMass / experimentInfo.data_max * data.dataAmount;
+			FileType type = data.baseTransmitValue > 0 || data.transmitBonus > 0 ? FileType.File : FileType.Sample;
+			long dataSize = Lib.MBToBit(data.dataAmount);
 
-				result = drive.Record_sample(data.subjectID, data.dataAmount, mass);
+			// complete partial results
+			foreach (ExperimentResult result in Drive.FindPartialResults(vessel, data.subjectID, type, 0, out long totalData))
+			{
+				long dataAdded = Math.Min(result.maxSize - result.size, dataSize);
+				result.size += dataAdded;
+				dataSize -= dataAdded;
+				if (dataSize <= 0) return;
+			}
+
+			ExperimentInfo expInfo = Science.GetExperimentInfoFromSubject(data.subjectID);
+
+			while (dataSize > 0)
+			{
+				Drive drive = Drive.GetDriveBestCapacity(vessel, type);
+				if (drive == null)
+				{
+					string sizeStr;
+
+					if (type == FileType.File)
+					{
+						sizeStr = Lib.HumanReadableDataSize(dataSize);
+					}
+					else
+					{
+						if (expInfo != null)
+							sizeStr = Lib.HumanReadableSampleSlotAndMass(dataSize, expInfo.massPerBit);
+						else
+							sizeStr = Lib.HumanReadableSampleSlots(dataSize);
+					}
+
+					Message.Post(Severity.warning, Lib.BuildString(
+						"Not enough space available to store '",
+						data.title,
+						"', ",
+						sizeStr,
+						" were lost."));
+					return;
+				}
+				else
+				{
+
+					long maxSize = expInfo != null ? expInfo.dataSize : 0;
+					double massPerBit = expInfo != null ? expInfo.massPerBit : 0;
+					long dataAdded = Math.Min(drive.SizeCapacityAvailable(type, data.subjectID), dataSize);
+					dataSize -= dataAdded;
+					new ExperimentResult(drive, type, data.subjectID, data.title, dataAdded, maxSize, massPerBit);
+				}
 			}
 		}
 
+		// we don't want anything from stock or other mods to be able to delete our data ?
 		public void DumpData(ScienceData data)
 		{
 			// remove the data
-			if (data.baseTransmitValue > float.Epsilon || data.transmitBonus > double.Epsilon)
-			{
-				drive.Delete_file(data.subjectID, data.dataAmount);
-			}
-			else
-			{
-				drive.Delete_sample(data.subjectID, data.dataAmount);
-			}
+			//if (data.baseTransmitValue > float.Epsilon || data.transmitBonus > double.Epsilon)
+			//{
+			//	drive.Delete_file(data.subjectID, data.dataAmount);
+			//}
+			//else
+			//{
+			//	drive.Delete_sample(data.subjectID, data.dataAmount);
+			//}
 		}
 
 		public void ReviewData()
@@ -360,6 +400,8 @@ namespace KERBALISM
 			// don't care
 			return false;
 		}
+
+		#endregion
 
 		//public override string GetModuleDisplayName() { return "Hard Drive"; }
 

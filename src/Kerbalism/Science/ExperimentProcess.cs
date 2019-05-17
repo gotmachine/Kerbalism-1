@@ -37,7 +37,7 @@ namespace KERBALISM
 		private List<string> requireIssues;
 
 		// dataSampled will be set when the subject changes and then increased everytime some data is processed by this process
-		// but do not expect it to accuratly reflect the data amount present in drive, it will become incoherent in many situations :
+		// but do not expect it to accuratly reflect the data amount present in drives, it will become incoherent in many situations :
 		// - if some data is transmitted or transfered from the drives
 		// - if some data is added or removed by another process
 		// it's purpose is only to prevent experiments in manual mode from running forever
@@ -93,7 +93,7 @@ namespace KERBALISM
 			// and we can manage that easily for the devices
 
 			// clear result reference if it was deleted
-			if (result != null && result.isDeleted) result = null;
+			if (result != null && result.IsDeleted()) result = null;
 
 			// test for non-situation dependant issues
 			processIssue = TestForIssues(vessel);
@@ -107,7 +107,7 @@ namespace KERBALISM
 				subject = new ExperimentSubject(expVar.exp_info, vessel);
 				if (subject.isValid)
 				{
-					result = Drive2.FindPartialResult(vessel, expVar.exp_info, subject.subject_id, type, privateHdId, out dataSampled);
+					result = Drive.FindPartialResult(vessel, subject.subject_id, type, privateHdId, out dataSampled);
 				}
 			}
 			else if (subject.HasChanged(vessel))
@@ -117,7 +117,7 @@ namespace KERBALISM
 
 				if (subject.isValid)
 				{
-					result = Drive2.FindPartialResult(vessel, expVar.exp_info, subject.subject_id, type, privateHdId, out dataSampled);
+					result = Drive.FindPartialResult(vessel, subject.subject_id, type, privateHdId, out dataSampled);
 				}
 				else
 				{
