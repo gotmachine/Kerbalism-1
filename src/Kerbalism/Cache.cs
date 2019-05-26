@@ -5,8 +5,6 @@ using UnityEngine;
 
 namespace KERBALISM
 {
-
-
 	public sealed class Vessel_info
 	{
 		public Vessel_info(Vessel v, Guid vessel_id, UInt64 inc)
@@ -89,7 +87,7 @@ namespace KERBALISM
 
 			// communications info
 			connection = ConnectionInfo.Update(v, powered, blackout);
-			transmitting = Science.Transmitting(v, connection.linked && connection.rate > double.Epsilon);
+			//transmitting = Science.Transmitting(v, connection.linked && connection.rate > double.Epsilon);
 
 			// habitat data
 			volume = Habitat.Tot_volume(v);
@@ -109,7 +107,8 @@ namespace KERBALISM
 			// other stuff
 			gravioli = Sim.Graviolis(v);
 
-			Drive.GetCapacity(v, out free_capacity, out total_capacity);
+			drive_fileusage = Drive.GetAvailableFileSpace(v, out drive_filespace);
+
 		}
 
 		// at the two highest timewarp speed, the number of sun visibility samples drop to the point that
@@ -161,7 +160,7 @@ namespace KERBALISM
 		public bool malfunction;            // true if at least a component has malfunctioned or had a critical failure
 		public bool critical;               // true if at least a component had a critical failure
 		public ConnectionInfo connection;   // connection info
-		public string transmitting;         // name of file being transmitted, or empty
+		public long transmitting_rate = 0;  // file(s) transmission datarate in bit/s, zero if nothing is being transmitted
 		public double volume;               // enabled volume in m^3
 		public double surface;              // enabled surface in m^2
 		public double pressure;             // normalized pressure
@@ -176,8 +175,10 @@ namespace KERBALISM
 		public List<Greenhouse.Data> greenhouses; // some data about greenhouses
 		public double gravioli;             // gravitation gauge particles detected (joke)
 		public bool powered;                // true if vessel is powered
-		public double free_capacity = 0.0;  // free data storage available data capacity of all public drives
-		public double total_capacity = 0.0; // data capacity of all public drives
+		public long drive_filespace;        // public drives file storage available
+		public double drive_fileusage;      // public drives file storage usage %
+
+		public string transmitting;
 	}
 
 

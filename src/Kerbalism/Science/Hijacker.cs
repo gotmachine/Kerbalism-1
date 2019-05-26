@@ -6,7 +6,8 @@ using KSP.Localization;
 
 namespace KERBALISM
 {
-
+	// TODO : fix the Hijacker
+	/*
 
 	// Remove the data from experiments (and set them inoperable) as soon as the
 	// science dialog is opened, and store the data in the vessel drive.
@@ -55,7 +56,7 @@ namespace KERBALISM
 				else
 				{
 					Drive drive = Drive.SampleDrive(meta.vessel, data.dataAmount, data.subjectID);
-					var mass = experimentInfo.sample_mass / experimentInfo.data_max * data.dataAmount;
+					var mass = experimentInfo.sampleMass / experimentInfo.data_max * data.dataAmount;
 
 					recorded = drive.Record_sample(data.subjectID, data.dataAmount, mass);
 				}
@@ -174,7 +175,7 @@ namespace KERBALISM
 			else
 			{
 				Drive drive = Drive.SampleDrive(meta.vessel, data.dataAmount, data.subjectID);
-				var mass = experimentInfo.sample_mass / experimentInfo.data_max * data.dataAmount;
+				var mass = experimentInfo.sampleMass / experimentInfo.data_max * data.dataAmount;
 				recorded = drive.Record_sample(data.subjectID, data.dataAmount, mass);
 			}
 
@@ -241,7 +242,7 @@ namespace KERBALISM
 			vessel = part.vessel;
 
 			// get the container module storing the data
-			container = Science.Container(part, ExperimentVariant.GetExperimentId(data.subjectID));
+			container = Container(part, Science.GetExperimentId(data.subjectID));
 
 			// get the stock experiment module storing the data (if that's the case)
 			experiment = container != null ? container as ModuleScienceExperiment : null;
@@ -266,8 +267,23 @@ namespace KERBALISM
 		public bool is_sample;                          // true if the data can't be transmitted
 		public bool is_rerunnable;                      // true if the container/experiment can collect data multiple times
 		public bool is_collectable;                     // true if data can be collected from the module / part
-	}
 
+		// return module acting as container of an experiment
+		public static IScienceDataContainer Container(Part p, string experiment_id)
+		{
+			// first try to get a stock experiment module with the right experiment id
+			// - this support parts with multiple experiment modules, like eva kerbal
+			foreach (ModuleScienceExperiment exp in p.FindModulesImplementing<ModuleScienceExperiment>())
+			{
+				if (exp.experimentID == experiment_id) return exp;
+			}
+
+			// if none was found, default to the first module implementing the science data container interface
+			// - this support third-party modules that implement IScienceDataContainer, but don't derive from ModuleScienceExperiment
+			return p.FindModuleImplementing<IScienceDataContainer>();
+		}
+	}
+	*/
 
 } // KERBALISM
 

@@ -6,7 +6,7 @@ using KSP.Localization;
 
 namespace KERBALISM
 {
-
+	/*
 	public sealed class Laboratory: PartModule, IModuleInfo, ISpecifics, IContractObjectiveModule
 	{
 		// config
@@ -373,7 +373,7 @@ namespace KERBALISM
 		public string GetPrimaryField() { return String.Empty; }
 		public Callback<Rect> GetDrawModulePanelCallback() { return null; }
 	}
-
+	*/
 
 } // KERBALISM
 

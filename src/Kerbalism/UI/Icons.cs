@@ -16,9 +16,23 @@ namespace KERBALISM
 		internal static Texture2D toggle_green;
 		internal static Texture2D toggle_red;
 
-		internal static Texture2D send_black;
+		// data manager
+		internal static Texture2D file;
+		internal static Texture2D file_green;
+		internal static Texture2D sample;
+		internal static Texture2D sample_green;
+		internal static Texture2D drive;
+		internal static Texture2D drive_filter;
+		internal static Texture2D transfer_white;
+		internal static Texture2D transfer_yellow;
+		internal static Texture2D transfer_cyan;
+		internal static Texture2D transfer_here;
+		internal static Texture2D delete;
+		internal static Texture2D send_white;
+		internal static Texture2D send_green;
 		internal static Texture2D send_cyan;
-		internal static Texture2D lab_black;
+		internal static Texture2D lab_white;
+		internal static Texture2D lab_green;
 		internal static Texture2D lab_cyan;
 
 		internal static Texture2D applauncher;
@@ -123,10 +137,24 @@ namespace KERBALISM
 			toggle_green = GetTexture("toggle-green");        // green check mark
 			toggle_red = GetTexture("toggle-red");            // red check mark
 
-			send_black = GetTexture("send-black");            // used by file man
-			send_cyan = GetTexture("send-cyan");
-			lab_black = GetTexture("lab-black");
-			lab_cyan = GetTexture("lab-cyan");
+			// data manager
+			file = GetTexture("data/icons8-file");
+			file_green = GetTexture("data/icons8-file-green");
+			sample = GetTexture("data/icons8-sample");
+			sample_green = GetTexture("data/icons8-sample-green");
+			drive = GetTexture("data/icons8-drive"); 
+			drive_filter = GetTexture("data/icons8-drivefilter"); 
+			transfer_white = GetTexture("data/icons8-transfer-white"); 
+			transfer_yellow = GetTexture("data/icons8-transfer-yellow"); 
+			transfer_cyan = GetTexture("data/icons8-transfer-cyan"); 
+			transfer_here = GetTexture("data/icons8-transferhere"); 
+			delete = GetTexture("data/icons8-delete"); 
+			send_white = GetTexture("data/icons8-send-white"); 
+			send_green = GetTexture("data/icons8-send-green"); 
+			send_cyan = GetTexture("data/icons8-send-cyan"); 
+			lab_white = GetTexture("data/icons8-lab-white"); 
+			lab_green = GetTexture("data/icons8-lab-green"); 
+			lab_cyan = GetTexture("data/icons8-lab-cyan"); 
 
 			applauncher = GetTexture("applauncher", 38, 38);
 

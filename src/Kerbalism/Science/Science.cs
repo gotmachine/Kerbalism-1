@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
@@ -18,58 +19,151 @@ namespace KERBALISM
 		// this is for auto-transmit throttling
 		public const double min_file_size = 0.002;
 
+		private static readonly List<PendingProcess> processes = new List<PendingProcess>();
+		private static readonly List<Result> results = new List<Result>();
+
+		private class PendingProcess
+		{
+			public DataProcess process;
+			public long dataPending;
+			public long dataProcessed;
+			public int convertingFromIndex;
+
+			public PendingProcess(DataProcess process, long dataPending)
+			{
+				this.process = process;
+				this.dataPending = dataPending;
+				dataProcessed = 0;
+				convertingFromIndex = -1;
+			}
+		}
+
+
 		// pseudo-ctor
 		public static void Init()
 		{
 			// make the science dialog invisible, just once
 			if (Features.Science)
 			{
-				GameObject prefab = AssetBase.GetPrefab("ScienceResultsDialog");
-				if (Settings.ScienceDialog)
-				{
-					prefab.gameObject.AddOrGetComponent<Hijacker>();
-				}
-				else
-				{
-					prefab.gameObject.AddOrGetComponent<MiniHijacker>();
-				}
+				// TODO : fix the Hijacker
+				//GameObject prefab = AssetBase.GetPrefab("ScienceResultsDialog");
+				//if (Settings.ScienceDialog)
+				//{
+				//	prefab.gameObject.AddOrGetComponent<Hijacker>();
+				//}
+				//else
+				//{
+				//	prefab.gameObject.AddOrGetComponent<MiniHijacker>();
+				//}
 
-				// load EXPERIMENT_INFO nodes first
-				ConfigNode[] exp_nodes = GameDatabase.Instance.GetConfigNodes("EXPERIMENT_INFO");
-				for (int i = 0; i < exp_nodes.Length; i++)
+				// load EXPERIMENT_INFO nodes
+				foreach (ConfigNode expNode in GameDatabase.Instance.GetConfigNodes("EXPERIMENT_INFO"))
 				{
-					ExperimentInfo exp_info = new ExperimentInfo(exp_nodes[i]);
+					ExperimentInfo exp_info = new ExperimentInfo(expNode);
 					if (!exp_infos.ContainsKey(exp_info.id))
+					{
 						exp_infos.Add(exp_info.id, exp_info);
+
+						foreach (ConfigNode varNode in expNode.GetNodes("VARIANT"))
+						{
+							ExperimentVariant exp_variant = new ExperimentVariant(varNode, exp_info);
+							if (!exp_variants.ContainsKey(exp_variant.id))
+								exp_variants.Add(exp_variant.id, exp_variant);
+							else
+								Lib.Log("WARNING : Duplicate VARIANT '" + exp_variant.id + "' wasn't loaded");
+						}
+					}
 					else
 						Lib.Log("WARNING : Duplicate EXPERIMENT_INFO '" + exp_info.id + "' wasn't loaded");
 				}
 
-				// load EXPERIMENT_VARIANT nodes
-				ConfigNode[] var_nodes = GameDatabase.Instance.GetConfigNodes("EXPERIMENT_VARIANT");
-				for (int i = 0; i < var_nodes.Length ; i++)
+
+
+				// build the biomes cache
+				foreach (CelestialBody body in FlightGlobals.Bodies)
 				{
-					ExperimentVariant exp_variant = new ExperimentVariant(var_nodes[i]);
-					if (!exp_variants.ContainsKey(exp_variant.id))
-						exp_variants.Add(exp_variant.id, exp_variant);
-					else
-						Lib.Log("WARNING : Duplicate EXPERIMENT_VARIANT '" + exp_variant.id + "' wasn't loaded");
+					if (body.BiomeMap != null)
+						biomes.Add(body, body.BiomeMap.Attributes.Select(y => y.name).ToArray());
 				}
 
+				// build the subject cache (megaloop !)
+				// and get the data already retrieved in RnD
+				foreach (ExperimentInfo exp_info in exp_infos.Values)
+				{
+					foreach (CelestialBody body in FlightGlobals.Bodies)
+					{
+						foreach (int sitInt in Enum.GetValues(typeof(KerbalismSituation)))
+						{
+							KerbalismSituation sit = (KerbalismSituation)sitInt;
 
+							if (sit == KerbalismSituation.None) continue;
+
+							if (exp_info.IsAvailable(sit, body))
+							{
+								if (!exp_info.BiomeIsRelevant(sit))
+								{
+									Subject subject = new Subject(exp_info, sit, body, string.Empty, true);
+									subject.dataStoredRnD += subject.DataStoredInRnD();
+									subjects.Add(subject.SubjectId, subject);
+								}
+								else
+								{
+									foreach (string biome in biomes[body])
+									{
+										Subject subject = new Subject(exp_info, sit, body, biome, true);
+										subject.dataStoredRnD += subject.DataStoredInRnD();
+										subjects.Add(subject.SubjectId, subject);
+									}
+
+									if (exp_info.allowMiniBiomes)
+									{
+										foreach (MiniBiome minibiome in body.MiniBiomes)
+										{
+											// TODO : Check that minibiome.GetTagKeyString is the right string
+											Subject subject = new Subject(exp_info, sit, body, minibiome.GetTagKeyString, true);
+											subject.dataStoredRnD += subject.DataStoredInRnD();
+											subjects.Add(subject.SubjectId, subject);
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+
+				// get the data stored in all drives from all vessels
+				foreach (Drive drive in DB.drives.Values)
+				{
+					foreach (Result result in drive)
+					{
+						subjects[result.subjectId].dataStoredFlight += result.SizeWithBuffer;
+					}
+				}
 			}
 		}
 
-		// consume EC for transmission, and transmit science data
+
+		// Summary :
+		// - get transmit capacity
+		// - get all processes from the vessel
+		// - foreach process, check conditions by calling CanRun()
+		// - foreach valid process, get how much data can be generated by calling GetDataPending()
+		//		- doing non-converter first
+		//		- giving the value from non-converters to converters, so they can take it into account
+		// - foreach process, doing converters first, try to transmit, then to store the data
+		// - foreach process, call their Process() method, passing them how much data they did actually generate.
+		// - if there is some transmit_capapcity left, try to transmit all the others files lying around
+		// - trigger the science point crediting when the transmit buffers are full
+
 		public static void Update(Vessel v, Vessel_info vi, VesselData vd, Vessel_resources resources, double elapsed_s)
 		{
 			// do nothing if science system is disabled
 			if (!Features.Science) return;
 
-
-
 			// get connection info and transmit capacity
+			long transmitLeft;
 			long transmitCapacity;
+
 			ConnectionInfo conn = vi.connection;
 			if (conn == null
 				|| !conn.linked
@@ -78,233 +172,261 @@ namespace KERBALISM
 			else
 				transmitCapacity = Lib.MBToBit(conn.rate * elapsed_s);
 
-			// TODO : prepare all labs
+			transmitLeft = transmitCapacity;
 
-			// prepare all experiments
-			List<ExperimentProcess> pending_exp = new List<ExperimentProcess>();
-			for (int i = 0; i < vd.experiments.Count; i++)
+			processes.Clear();
+			results.Clear();
+
+			// get all results from all drives :
+			// - delete empty results
+			// - reset the transmit/process rates
+			// - build the list of results to be transmitted
+			foreach (Drive drive in Drive.GetDrives(v))
 			{
-				if (vd.experiments[i].Prepare(v, elapsed_s))
+				for (int i = drive.Count - 1; i >= 0; i--)
 				{
-					pending_exp.Add(vd.experiments[i]);
+					// remove zero-size samples that didn't grow last time
+					if (drive[i].type == FileType.Sample)
+					{
+						if (drive[i].Size == 0 && drive[i].processRate == 0)
+							drive.RemoveAt(i);
+
+						// for samples reset process rate and do nothing else
+						drive[i].processRate = 0;
+						continue;
+					}
+
+					// delete zero size files that didn't grow and weren't transmitted last time
+					if (drive[i].Size == 0 && drive[i].processRate == 0 && drive[i].transmitRate == 0)
+					{
+						// credit the science value of the buffer
+						if (drive[i].BufferSize > 0)
+							Credit(drive[i], v.protoVessel, true);
+						// TODO : send a "bool transmissionEnd = true" to Credit(), so it check the science value remaining and alert the player when subject is completed
+
+						drive.RemoveAt(i);
+						continue;
+					}
+
+					// we don't need the process rate anymore, reset it
+					drive[i].processRate = 0;
+
+					// if the file isn't flagged for transmission, reset the transmit rate
+					if (!drive[i].process)
+					{
+						drive[i].transmitRate = 0;
+						continue;
+					}
+
+					// file can be transmitted : add it the list
+					results.Add(drive[i]);
 				}
 			}
 
-			// get all file results from all drives
-			List<ExperimentResult> ts_results = new List<ExperimentResult>();
-			foreach (Drive drive in Drive.GetDrives(v))
+			// sort results by the previous transmit rate, in ascending order
+			// this way we will keep transferring the same results at each sim step
+			// but priority will be given to newly generated results (they will be added at the end of the list)
+			results.Sort((x, y) => x.transmitRate.CompareTo(y.transmitRate));
+
+			// reset transmitRate now because it may be changed when transmitting process data
+			for (int i = 0; i < results.Count; i++)
 			{
-				ts_results.AddRange(drive.FindAll(p => p.type == FileType.File));
+				results[i].transmitRate = 0;
 			}
 
-			// TODO : CHECK : put first files that were already being transferred
-			ts_results.Sort((x, y) => y.transmit_rate.CompareTo(x.transmit_rate));
+			// get all processes that can generate data, and sort the list with converter processes first
+			// note that all converters that can run are added, even if in the end they don't generate any data
+			// we can't know yet because some data to be converted may be generated by non-converters
+			int converterCount = 0;
+			foreach (DataProcess p in DataProcess.GetProcesses(v))
+			{
+				if (p.Update(v, elapsed_s))
+				{
+					if (p.isConverter)
+					{
+						// keep track of converter count to use it in the for loops
+						converterCount++;
+						// insert converters at the top (zero data generated for now)
+						processes.Insert(0, new PendingProcess(p, 0)); 
+					}
+					else
+					{
+						// add non-converters and get how much data they can generate
+						processes.Add(new PendingProcess(p, p.GetDataPending(v, elapsed_s)));
+					}
+				}
+			}
 
-			// reset transmit_rate
-			ts_results.ForEach(r => r.transmit_rate = 0);
+			// for each converter process, get dataPending that may by generated by non-converter processes
+			// performance note : given the small amount of different processes that may be running at once
+			// it is probably faster to iterate than trying to cache dataPending in the previous loop
+			for (int i = 0; i < converterCount; i++)
+			{
+				
 
-			// filter to get only files flagged for transmit
-			ts_results.RemoveAll(r => !r.process);
+				// we don't get data from non-converter processes if auto-analyze is disabled and the result don't exist yet
+				if (processes[i].process.convertedResult == null && !PreferencesScience.Instance.analyzeSamples)
+					continue;
 
+				long pendingDataToConvert = 0;
 
-			// TODO : process labs data
+				// for each non-converter process
+				for (int j = converterCount; j < processes.Count; j++)
+				{
+					// if the non-converter process is generating data that can be converted by the converter process
+					if (processes[j].process.type == FileType.Sample
+						&& processes[j].process.Subject.SubjectId == processes[i].process.Subject.SubjectId)
+					{
+						// the non converter process must have a result (that may stay empty), otherwise we can't get the Subject.
+						// Note that this allow producing a sample even if there is no storage capacity left
+						processes[j].process.CreateResult(v, 0);
 
+						if (processes[j].process.result == null)
+							break;
 
-			// transmit and store experiments data
-			// note : in manual mode, if transmit capacity is enough for all data to be transmitted, the experiment will run forever.
-			for (int i = 0; i < pending_exp.Count; i++)
+						// get the data amount that is generated by the non-converter process and remember its index
+						processes[i].process.convertedResult = processes[j].process.result;
+						pendingDataToConvert += processes[j].dataPending;
+						processes[i].convertingFromIndex = j;
+						break;
+					}
+				}
+				processes[i].dataPending = processes[i].process.GetDataPending(v, elapsed_s, pendingDataToConvert);
+			}
+
+			// store and transmit data from processes, doing converters first
+			for (int i = 0; i < processes.Count; i++)
 			{
 				// transmit if :
 				// - there is some transmit capacity
-				// - result is a file (not a sample)
+				// - result is a file
 				// - result is flagged for transfer or this is a new result and auto-transmit is true
-				if (transmitCapacity > 0
-					&& pending_exp[i].type == FileType.File
-					&& ((pending_exp[i].result != null && pending_exp[i].result.process)
-						|| (pending_exp[i].result == null && PreferencesScience.Instance.transmitScience)))
+				if (transmitLeft > 0
+					&& processes[i].process.type == FileType.File
+					&& ((processes[i].process.result != null && processes[i].process.result.process) // bad choice of var names, i agree...
+						|| (processes[i].process.result == null && PreferencesScience.Instance.transmitScience)))
 				{
-					long transmitted = pending_exp[i].dataPending < transmitCapacity ? pending_exp[i].dataPending : transmitCapacity;
+					long transmitted = Math.Min(processes[i].dataPending, transmitLeft);
 					if (transmitted > 0)
 					{
-						// at this point some data is transmitted so we need a result object for the transmit buffer
-						// the result is created empty and will stay empty if all the data is transmitted.
-						// this way it will appear in the file manager UI
-						if (pending_exp[i].result == null)
-						{
-							// get a drive, even a full one (we are creating a zero size file)
-							Drive drive = Drive.GetDriveBestCapacity(v, pending_exp[i].type, 0, pending_exp[i].privateHdId);
-							if (drive != null)
-							{
-								pending_exp[i].result = new ExperimentResult(drive, pending_exp[i].type, pending_exp[i].subject);
-								ts_results.Add(pending_exp[i].result);
-							}
-						}
+						// Some data is transmitted so we need a result object for the transmit buffer
+						// If no result exists, a new empty one is created (even if all drives ares full)
+						if (processes[i].process.CreateResult(v, 0))
+							results.Add(processes[i].process.result);
 
-						if (pending_exp[i].result != null)
+						// at this point if the result is null, either there are no drives or only private drives on the vessel
+						if (processes[i].process.result != null)
 						{
-							transmitCapacity -= transmitted;
-							pending_exp[i].dataPending -= transmitted;
-							pending_exp[i].dataProcessed += transmitted;
-							pending_exp[i].result.transmitBuffer += transmitted;
-							pending_exp[i].result.transmit_rate = (long)(transmitted / elapsed_s);
+							transmitLeft -= transmitted;
+							processes[i].dataPending -= transmitted;
+							processes[i].dataProcessed += transmitted;
+							processes[i].process.result.BufferSize += transmitted;
+							processes[i].process.result.transmitRate += (long)(transmitted / elapsed_s);
+							processes[i].process.result.processRate += (long)(transmitted / elapsed_s);
 						}
 					}
 				}
 
 				// we have transmitted all we can, now try storing the remaining data in drives
-				while (pending_exp[i].dataPending > 0)
+				while (processes[i].dataPending > 0)
 				{
-					if (pending_exp[i].result == null)
-					{
-						// get a drive with some space on it
-						Drive drive = Drive.GetDriveBestCapacity(v, pending_exp[i].type, 1, pending_exp[i].privateHdId);
-						if (drive != null)
-							pending_exp[i].result = new ExperimentResult(drive, pending_exp[i].type, pending_exp[i].subject);
-					}
+					// if we don't already have a result for this experiement,
+					// find a drive with at least 1 bit of space available and create a new result
+					processes[i].process.CreateResult(v, 1);
 
-					if (pending_exp[i].result == null)
-					{
+					// if no result : all drives are full, abort
+					if (processes[i].process.result == null)
 						break;
-					}
+
+					// clamp data size to the drive available space
+					long stored = Math.Min(processes[i].process.result.DriveCapacityAvailable(), processes[i].dataPending);
+
+					// add data to the result and if the result has reached its max size,
+					// let the loop continue so we can try to create another one
+					if (processes[i].process.result.AddData(ref stored))
+					{
+						processes[i].process.result.processRate += (long)(stored / elapsed_s);
+					}	
 					else
 					{
-						long stored = Math.Min(pending_exp[i].result.SizeCapacityAvailable(), pending_exp[i].dataPending);
+						processes[i].process.result.processRate += (long)(stored / elapsed_s);
+						processes[i].process.result = null;
+					}
 
-						pending_exp[i].result.size += stored;
-						if (pending_exp[i].type == FileType.Sample)
-							pending_exp[i].sampleAmount -= stored;
+					// if drive is now full, try to find another one
+					if (stored < processes[i].dataPending)
+						processes[i].process.result = null;
 
-						// if drive is full, try to find another one
-						if (stored < pending_exp[i].dataPending)
-							pending_exp[i].result = null;
+					// keep track of the data stored
+					processes[i].dataPending -= stored;
+					processes[i].dataProcessed += stored;
+				}
 
-						pending_exp[i].dataPending -= stored;
-						pending_exp[i].dataProcessed += stored;
+				// if this is a converter, update the converted result / process
+				if (i < converterCount)
+				{
+					long dataToRemove = 0;
+					// are we converting data from a non-converter process ?
+					if (processes[i].convertingFromIndex >= 0)
+					{
+						// clamp the amount to the non-converter production and update its data pending/processed
+						dataToRemove = Math.Min(processes[processes[i].convertingFromIndex].dataPending, processes[i].dataProcessed);
+						processes[processes[i].convertingFromIndex].dataPending -= dataToRemove;
+						processes[processes[i].convertingFromIndex].dataProcessed += dataToRemove;
+						processes[i].process.convertedResult.processRate += (long)(dataToRemove / elapsed_s);
+						dataToRemove = processes[i].dataProcessed - dataToRemove;
+					}
+					// if we have processed more than what was generated by the process
+					// then we converted some data from a preexisting Result
+					if (processes[i].dataProcessed > dataToRemove)
+					{
+						processes[i].process.convertedResult.RemoveData(ref dataToRemove);
 					}
 				}
 			}
 
 			// if there is some transmit capacity left, transmit data stored in drives
-			if (transmitCapacity > 0)
+			if (transmitLeft > 0)
 			{
-				for (int i = 0; i < ts_results.Count; i++)
+				// traversing in reverse because list is sorted with highest priority results last
+				for (int i = results.Count - 1; i >= 0; i--)
 				{
-					if (ts_results[i].size <= 0) continue;
-					long transmitted = ts_results[i].size < transmitCapacity ? ts_results[i].size : transmitCapacity;
+					if (results[i].Size <= 0) continue;
+					long transmitted = results[i].Size < transmitLeft ? results[i].Size : transmitLeft;
 
-					ts_results[i].size -= transmitted;
-					ts_results[i].transmitBuffer += transmitted;
-					ts_results[i].transmit_rate = (long)(transmitted / elapsed_s);
+					results[i].RemoveData(ref transmitted);
+					results[i].BufferSize += transmitted;
+					results[i].transmitRate += (long)(transmitted / elapsed_s);
 
-					transmitCapacity -= transmitted;
-					if (transmitCapacity <= 0) break;
+					transmitLeft -= transmitted;
+					if (transmitLeft <= 0) break;
 				}
+			}
+
+			// Now that every bit is accounted for, tell the processes to update themselves
+			for (int i = 0; i < processes.Count; i++)
+			{
+				processes[i].process.Process(v, elapsed_s, processes[i].dataProcessed);
 			}
 
 			// avoid corner-case when RnD isn't live during scene changes
 			// - this avoid losing science if the buffer reach threshold during a scene change
-			// TODO : only skip the following for loop
+			// TODO : where to put this ?
 			if (HighLogic.CurrentGame.Mode != Game.Modes.SANDBOX && ResearchAndDevelopment.Instance == null) return;
 
 			// all file sizes are now updated
-			// actually register data transmitted for files whose buffer is full, and delete empty files
-			for (int i = 0; i < ts_results.Count; i++)
+			// actually register data transmitted for files whose buffer is full
+			for (int i = 0; i < results.Count; i++)
 			{
-				if (ts_results[i].transmitBuffer > 0)
+				if (results[i].BufferSize > 0 && results[i].BufferSize > results[i].MaxBufferSize)
 				{
-					if (ts_results[i].transmitBuffer > ts_results[i].bufferFull)
-					{
-						Credit(ts_results[i].subject_id, ts_results[i].transmitBuffer, true, v.protoVessel);
-						ts_results[i].transmitBuffer = 0;
-					}
-					else if (ts_results[i].size == 0 && ts_results[i].transmit_rate == 0)
-					{
-						Credit(ts_results[i].subject_id, ts_results[i].transmitBuffer, true, v.protoVessel);
-						ts_results[i].Delete();
-					}
-					// TODO : message when subject is completed
-					//			Message.Post(
-					//				Lib.BuildString(Lib.HumanReadableScience(totalValue), " ", Experiment(exp_filename).FullName(exp_filename), " completed"),
-					//			  Lib.TextVariant(
-					//					"Our researchers will jump on it right now",
-					//					"There is excitement because of your findings",
-					//					"The results are causing a brouhaha in R&D"
-					//				));
+					Credit(results[i], v.protoVessel, true);
+					results[i].BufferSize = 0;
 				}
 			}
 
-			// TODO : EC and resource consumption
-			// TODO : not enough storage issue sent back to the process
-
-
-
-
-			//ConnectionInfo conn = vi.connection;
-			//if (conn == null || String.IsNullOrEmpty(vi.transmitting)) return;
-
-			//// get filename of data being downloaded
-			//var exp_filename = vi.transmitting;
-
-			////var drive = FindDrive(v, exp_filename);
-
-			//// if some data is being downloaded
-			//// - avoid cornercase at scene changes
-			//if (exp_filename.Length > 0 && drive != null)
-			//{
-			//	// get file
-			//	File file = drive.files[exp_filename];
-
-			//	// determine how much data is transmitted
-			//	double transmitted = Math.Min(file.size, conn.rate * elapsed_s);
-
-			//	// consume data in the file
-			//	file.size -= transmitted;
-
-			//	// accumulate in the buffer
-			//	file.buff += transmitted;
-
-			//	bool credit = file.size <= double.Epsilon;
-
-			//	// this is the science value remaining for this experiment
-			//	var remainingValue = Value(exp_filename, 0);
-
-			//	// this is the science value of this sample
-			//	var dataValue = Value(exp_filename, file.buff);
-
-			//	if (!credit && file.buff > min_buffer_size) credit = dataValue > buffer_science_value;
-
-			//	// if buffer is full, or file was transmitted completely
-			//	if (credit)
-			//	{
-			//		var totalValue = TotalValue(exp_filename);
-
-			//		// collect the science data
-			//		Credit(exp_filename, file.buff, true, v.protoVessel);
-
-			//		// reset the buffer
-			//		file.buff = 0.0;
-
-			//		// this was the last useful bit, there is no more value in the experiment
-			//		if (remainingValue >= 0.1 && remainingValue - dataValue < 0.1)
-			//		{
-						
-			//			Message.Post(
-			//				Lib.BuildString(Lib.HumanReadableScience(totalValue), " ", Experiment(exp_filename).FullName(exp_filename), " completed"),
-			//			  Lib.TextVariant(
-			//					"Our researchers will jump on it right now",
-			//					"There is excitement because of your findings",
-			//					"The results are causing a brouhaha in R&D"
-			//				));
-			//		}
-			//	}
-
-			//	// if file was transmitted completely
-			//	if (file.size <= double.Epsilon)
-			//	{
-			//		// remove the file
-			//		drive.Delete_file(exp_filename);
-			//	}
-			//}
+			//TODO : we should not be updating the cache from here, but for now I don't care
+			vi.transmitting_rate = (long)((transmitCapacity - transmitLeft) / elapsed_s);
 		}
 
 		// return name of file being transmitted from vessel specified
@@ -336,34 +458,77 @@ namespace KERBALISM
 
 
 		// credit science for the experiment subject specified
-		public static float Credit(string subject_id, double size, bool transmitted, ProtoVessel pv)
+		// TODO : move this to a 100% event based implementation
+		// OnScienceRecieved.Fire send the full list of every Result transmitted
+		// then do the actual crediting once from the kerbalism main loop after every vessel Science.Update()
+		public static float Credit(Result result, ProtoVessel pv, bool transmitOnly)
 		{
-			var credits = KERBALISM.ExperimentVariant.Value(subject_id, size);
+			float credits;
 
-			// credit the science
-			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
+			// try to get the stock subject from the stock scienceSubjects dictionary
+			ScienceSubject subject = ResearchAndDevelopment.GetSubjectByID(result.subjectId);
+
 			if(subject == null)
 			{
-				// TODO : actually create the subject !
-				Lib.Log("WARNING: science subject " + subject_id + " cannot be credited in R&D");
+				// if null, the stock subject doesn't exist yet. We have to create and add it.
+				// get the private stock subjects dictionary
+				var scienceSubjects = Lib.ReflectionValue<Dictionary<string, ScienceSubject>>
+				(
+				  ResearchAndDevelopment.Instance,
+				  "scienceSubjects"
+				);
+
+				if (scienceSubjects != null)
+				{
+					subject = result.ParseToStockSubject(transmitOnly);
+					credits = subject.science;
+					scienceSubjects.Add(result.subjectId, subject);
+				}
+				else
+				{
+					Lib.Log("WARNING: science subject " + result.subjectId + " cannot be credited in R&D");
+					return 0f;
+				}
 			}
 			else
 			{
-				subject.science += credits / HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
+				// the stock subject already exists : increase the science stored.
+				credits = transmitOnly ?
+				(float)result.ScienceValueBase(result.BufferSize) :
+				(float)result.ScienceValueBase(result.Size + result.BufferSize);
+
+				subject.science += credits;
 				subject.scientificValue = ResearchAndDevelopment.GetSubjectValue(subject.science, subject);
-				ResearchAndDevelopment.Instance.AddScience(credits, transmitted ? TransactionReasons.ScienceTransmission : TransactionReasons.VesselRecovery);
-
-				// fire game event
-				// - this could be slow or a no-op, depending on the number of listeners
-				//   in any case, we are buffering the transmitting data and calling this
-				//   function only once in a while
-				GameEvents.OnScienceRecieved.Fire(credits, subject, pv, false);
-
-				API.OnScienceReceived.Fire(credits, subject, pv, transmitted);
 			}
 
-			// return amount of science credited
+			// remove the data from our result
+			result.BufferSize = 0;
+			if (!transmitOnly)
+				result.RemoveAllData();
+
+			// apply the game difficulty factor :
+			credits *= HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
+			// and finaly give the credits to the player
+			ResearchAndDevelopment.Instance.AddScience(credits,transmitOnly ? TransactionReasons.ScienceTransmission : TransactionReasons.VesselRecovery);
+
+			// fire game event
+			// - this could be slow or a no-op, depending on the number of listeners
+			//   in any case, we are buffering the transmitting data and calling this
+			//   function only once in a while
+			GameEvents.OnScienceRecieved.Fire(credits, subject, pv, false);
+
+			//API.OnScienceReceived.Fire(credits, subject, pv, transmitted);
+
 			return credits;
+
+			// TODO : message when subject is completed
+			//			Message.Post(
+			//				Lib.BuildString(Lib.HumanReadableScience(totalValue), " ", Experiment(exp_filename).FullName(exp_filename), " completed"),
+			//			  Lib.TextVariant(
+			//					"Our researchers will jump on it right now",
+			//					"There is excitement because of your findings",
+			//					"The results are causing a brouhaha in R&D"
+			//				));
 		}
 
 		// return module acting as container of an experiment
@@ -381,8 +546,18 @@ namespace KERBALISM
 			return p.FindModuleImplementing<IScienceDataContainer>();
 		}
 
-
-
+		/// <summary>
+		/// return the ExperimentInfo object corresponding to a "experiment_id"
+		/// </summary>
+		public static ExperimentVariant GetExperimentVariant(string variant_id)
+		{
+			if (!exp_variants.ContainsKey(variant_id))
+			{
+				Lib.Log("ERROR: No ExperimentInfo found for id " + variant_id);
+				return null;
+			}
+			return exp_variants[variant_id];
+		}
 
 		/// <summary>
 		/// return the ExperimentInfo object corresponding to a "experiment_id"
@@ -414,50 +589,35 @@ namespace KERBALISM
 			return i > 0 ? subject_id.Substring(0, i) : subject_id;
 		}
 
+		#region Global subject cache
 
-
-
-		#region Stored data cache
-
-		// Rebuild the stored experiements data cache
-		public static void UpdateStoredDataCache()
+		public static Subject GetSubjectFromCache(string subject_id)
 		{
-			storedData.Clear();
+			if (subjects.ContainsKey(subject_id))
+				return subjects[subject_id];
 
-			foreach (var drive in DB.drives.Values)
+			return null;
+		}
+
+		// Remove all data stored in a drive from the global in-flight subject data cache
+		public static void ClearFlightSubjectData(Drive drive)
+		{
+			for (int i = 0; i < drive.Count; i++)
 			{
-				foreach (var file in drive.files) AddStoredData(file.Key, file.Value.size);
-				foreach (var sample in drive.samples) AddStoredData(sample.Key, sample.Value.size);
+				AddFlightSubjectData(drive[i].subjectId, -drive[i].SizeWithBuffer);
 			}
 		}
 
-		// Remove all data stored in a drive from the experiements data cache
-		public static void ClearStoredDataInDrive(Drive drive)
+		// Get stored data from the global in-flight subject data cache
+		public static long GetFlightSubjectData(string subject_id)
+		{ return subjects.ContainsKey(subject_id) ? subjects[subject_id].dataStoredFlight : 0; }
+
+		// Add data/remove data from the global in-flight subject data cache
+		public static void AddFlightSubjectData(string subject_id, long amount)
 		{
-			foreach (string subject_id in drive.files.Keys) ClearStoredData(subject_id);
-			foreach (string subject_id in drive.samples.Keys) ClearStoredData(subject_id);
+			if (subjects.ContainsKey(subject_id))
+				subjects[subject_id].dataStoredFlight += amount;
 		}
-
-		// Get stored data amount in all vessels
-		public static long GetStoredData(string subject_id)
-		{ return storedData.ContainsKey(subject_id) ? storedData[subject_id] : 0; }
-
-		// Add data amount to the stored experiements data cache
-		public static void AddStoredData(string subject_id, long amount)
-		{
-			if (storedData.ContainsKey(subject_id))
-				storedData[subject_id] += amount;
-			else
-				storedData.Add(subject_id, amount);
-		}
-
-		// Remove data amount to the stored experiements data cache
-		public static void RemoveStoredData(string subject_id, long amount)
-		{ if (storedData.ContainsKey(subject_id)) storedData[subject_id] = Math.Max(storedData[subject_id] - amount, 0); }
-
-		// Remove all data for the experiement subject from the stored experiements data cache
-		public static void ClearStoredData(string subject_id)
-		{ storedData.Remove(subject_id); }
 
 		#endregion
 
@@ -554,10 +714,10 @@ namespace KERBALISM
 		
 
 		// experiment info 
-		static readonly Dictionary<string, ExperimentVariant> exp_variants = new Dictionary<string, ExperimentVariant>();
-		static readonly Dictionary<string, ExperimentInfo> exp_infos = new Dictionary<string, ExperimentInfo>();
-
-		static readonly Dictionary<string, long> storedData = new Dictionary<string, long>();
+		private static readonly Dictionary<string, ExperimentInfo> exp_infos = new Dictionary<string, ExperimentInfo>();
+		private static readonly Dictionary<string, ExperimentVariant> exp_variants = new Dictionary<string, ExperimentVariant>();
+		private static readonly Dictionary<string, Subject> subjects = new Dictionary<string, Subject>();
+		private static readonly Dictionary<CelestialBody, string[]> biomes = new Dictionary<CelestialBody, string[]>();
 
 	}
 

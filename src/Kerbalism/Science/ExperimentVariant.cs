@@ -12,33 +12,98 @@ namespace KERBALISM
 	/// </summary>
 	public sealed class ExperimentVariant
 	{
+		/// <summary>
+		/// Same as a KeyValuePair, but is a class instead of a struct
+		/// </summary>
+		public class ObjectPair<TKey, TValue>
+		{
+			public TKey key;
+			public TValue value;
+
+			public ObjectPair(TKey key, TValue value)
+			{
+				this.key = key;
+				this.value = value;
+			}
+		}
+
+		/// <summary>experiment base definition</summary>
+		public ExperimentInfo expInfo { get; private set; }
+
+		// config derived values
+
+		/// <summary>unique id to be used in the partmodule "exp_variant_id"</summary>
+		public string id { get; private set; }
+
+		/// <summary>optional, some nice lines of text to be shown on the module description (VAB/SPH only)</summary>
+		public string experimentDesc { get; private set; }
+
+		/// <summary>data production rate (internally stored in bit/s), defined in cfg in MB/. For sample, 1 slot = 1024 MB.</summary>
+		public long dataRate { get; private set; }
+
+		/// <summary>EC consumption rate per-second</summary>
+		public double ecRate { get; private set; }
+
+		/// <summary>if set to true, the experiment will generate mass out of nothing</summary>
+		public bool sampleCollecting { get; private set; }
+
+		/// <summary>amount of samples the experiment is shipped with</summary>
+		public int sampleAmount { get; private set; }
+
+		/// <summary>true if experiment can be run while shrouded</summary>
+		public bool allowShrouded { get; private set; }
+
+		/// <summary>optional, additional requirements that must be met</summary>
+		public string requires { get; private set; }
+
+		/// <summary>optional, operator crew. if set, crew has to be on vessel while recording</summary>
+		public string crewOperate { get; private set; }
+
+		/// <summary>optional, reset crew. if set, experiment will stop recording after situation change</summary>
+		public string crewReset { get; private set; }
+
+		/// <summary>optional, prepare crew. if set, experiment will require crew to set up before it can start recording</summary>
+		public string crewPrepare { get; private set; }
+
+		/// <summary>optional, resources consumed by this experiment</summary>
+		public string resources { get; private set; }
+
+		// internal data
+
+		// not ideal because unboxing at but least we won't be parsing strings all the time and the array should be fast
+		private ObjectPair<string, object>[] req_values;
+
+		// for building the UI message, finding by key is needed
+		private Dictionary<string, string> req_strings;
+
+		// parsed resources
+		public ObjectPair<string, double>[] res_parsed { get; private set; }
+
 		#region public methods
 
-		public ExperimentVariant(ConfigNode node)
+		public ExperimentVariant(ConfigNode node, ExperimentInfo expInfo)
 		{
-			id = Lib.ConfigValue(node, "id", "");
-			exp_def_id = Lib.ConfigValue(node, "exp_def_id", "");
-			experiment_desc = Lib.ConfigValue(node, "experiment_desc", string.Empty);
+			this.expInfo = expInfo;
 
-			ec_rate = Lib.ConfigValue(node, "ec_rate", 0.01f);
-			sample_collecting = Lib.ConfigValue(node, "sample_collecting", false);
-			allow_shrouded = Lib.ConfigValue(node, "allow_shrouded", true);
+			id = Lib.ConfigValue(node, "id", string.Empty);
+			experimentDesc = Lib.ConfigValue(node, "experiment_desc", string.Empty);
+			ecRate = Lib.ConfigValue(node, "ec_rate", 0.01f);
+			sampleCollecting = Lib.ConfigValue(node, "sample_collecting", false);
+			allowShrouded = Lib.ConfigValue(node, "allow_shrouded", true);
 			requires = Lib.ConfigValue(node, "requires", string.Empty);
-			crew_operate = Lib.ConfigValue(node, "crew_operate", string.Empty);
-			crew_reset = Lib.ConfigValue(node, "crew_reset", string.Empty);
-			crew_prepare = Lib.ConfigValue(node, "crew_prepare", string.Empty);
+			crewOperate = Lib.ConfigValue(node, "crew_operate", string.Empty);
+			crewReset = Lib.ConfigValue(node, "crew_reset", string.Empty);
+			crewPrepare = Lib.ConfigValue(node, "crew_prepare", string.Empty);
 			resources = Lib.ConfigValue(node, "resources", string.Empty);
 
-			double MBrate = Lib.ConfigValue(node, "data_rate", 0.01);
-			data_rate = Lib.MBToBit(MBrate);
+			double duration = Lib.ConfigValue(node, "duration", 1.0);
+			dataRate = (long)(expInfo.fullSize / (duration * 60.0));
 
-			exp_info = Science.GetExperimentInfo(exp_def_id);
-
-			if (exp_info == null)
-			{
-				Lib.Log("ERROR: failed to load EXPERIMENT_VARIANT '" + id + "', could not get EXPERIMENT_INFO '" + exp_def_id + "'");
-				return;
-			}
+			// if dataRate is less than 10 bit/fixedUpdate == 500 bit/sec == ~0.00006 MB/sec
+			// the potential duration imprecision is greater than 10% and we should at least warn about it
+			if (dataRate < 500)
+				Lib.Log("WARNING : experiment variant '" + id + "' datarate is too low, duration will be wrong by as much as 10%. " +
+					"Never define datarate lower than 0.00006 MB/s, and try to keep it above ~0.0005 MB/s");
 
 			// parse requirements
 			ParseRequirements();
@@ -46,11 +111,6 @@ namespace KERBALISM
 			// parse resources
 			ParseResources();
 		}
-
-
-
-
-
 
 		// TODO : REQUIREMENTS SCALAR EVALUATION
 		// change this to return a List<KeyValuePair<string, double>>, with double being a [0,1] scalar
@@ -355,9 +415,6 @@ namespace KERBALISM
 		#region static methods
 
 
-
-
-
 		#endregion
 
 		private static string MaskToString(string text, uint flag, uint situationMask, uint biomeMask)
@@ -369,91 +426,9 @@ namespace KERBALISM
 			return result;
 		}
 
-		/// <summary>stock experiment definition</summary>
-		public ExperimentInfo exp_info { get; private set; }
-
-		/// <summary>CFG : unique id to be used in the partmodule "exp_variant_id"</summary>
-		public string id { get; private set; }
-
-		/// <summary>CFG : id of the EXPERIMENT_DEFINITION that will be registered as a result</summary>
-		public string exp_def_id { get; private set; }
-
-		/// <summary>CFG : optional, some nice lines of text</summary>
-		public string experiment_desc { get; private set; }
-
-		/// <summary>= baseValue * dataScale. Data amount for a complete result in MB. For sample, 1 slot = 1024 MB.</summary>
-		//public long data_max { get; private set; }
-
-		/// <summary>data production rate (internally stored in bit/s), defined in cfg in MB/. For sample, 1 slot = 1024 MB.</summary>
-		public long data_rate { get; private set; }
-
-		/// <summary>CFG : EC consumption rate per-second</summary>
-		public double ec_rate { get; private set; }
 
 
 
-		/// <summary>CFG : if set to true, the experiment will generate mass out of nothing</summary>
-		public bool sample_collecting { get; private set; }
-
-		/// <summary>CFG : true if experiment can be run while shrouded</summary>
-		public bool allow_shrouded { get; private set; }
-
-		/// <summary>CFG : optional, additional requirements that must be met</summary>
-		public string requires { get; private set; }
-
-		/// <summary>CFG : optional, operator crew. if set, crew has to be on vessel while recording</summary>
-		public string crew_operate { get; private set; }
-
-		/// <summary>CFG : optional, reset crew. if set, experiment will stop recording after situation change</summary>
-		public string crew_reset { get; private set; }
-
-		/// <summary>CFG : optional, prepare crew. if set, experiment will require crew to set up before it can start recording</summary>
-		public string crew_prepare { get; private set; }
-
-		/// <summary>CFG : optional, resources consumed by this experiment</summary>
-		public string resources { get; private set; }
-
-		// not ideal because unboxing at but least we won't be parsing strings all the time and the array should be fast
-		private ObjectPair<string, object>[] req_values;
-
-		// for building the UI message, finding by key is needed
-		private Dictionary<string, string> req_strings;
-
-		// parsed resources
-		public ObjectPair<string, double>[] res_parsed { get; private set; }
-
-		/// <summary>
-		/// Same as a KeyValuePair, but is a class instead of a struct
-		/// </summary>
-		public class ObjectPair<TKey, TValue>
-		{
-			public TKey key;
-			public TValue value;
-
-			public ObjectPair(TKey key, TValue value)
-			{
-				this.key = key;
-				this.value = value;
-			}
-		}
-
-
-		// TODO : this is a stub showing how we should register experiments in the RnD instance
-		//public static void AddExperimentToRnD(ExperimentInfo exp_variant)
-		//{
-		//	var experiments = Lib.ReflectionValue<Dictionary<string, ScienceExperiment>>
-		//	(
-		//	  ResearchAndDevelopment.Instance,
-		//	  "experiments"
-		//	);
-
-		//	var exp = new ScienceExperiment();
-		//	exp.baseValue = exp_variant.baseValue;
-		//	exp.dataScale = exp_variant.dataScale;
-		//	...
-
-		//	experiments.Add(exp_variant.id, exp);
-		//}
 	}
 
 } // KERBALISM

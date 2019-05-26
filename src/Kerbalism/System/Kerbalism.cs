@@ -105,9 +105,6 @@ namespace KERBALISM
 				// remember savegame id
 				savegame_uid = DB.uid;
 			}
-
-			// Rebuild the experiment cache
-			Science.UpdateStoredDataCache();
 		}
 
 		public override void OnSave(ConfigNode node)

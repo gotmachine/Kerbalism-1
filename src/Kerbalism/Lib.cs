@@ -711,7 +711,7 @@ namespace KERBALISM
 			return (Math.Abs(value) <= 0 ? "none" : BuildString(value.ToString("F0"), append));
 		}
 
-		///<summary> Format data size, the size parameter is in MB </summary>
+		///<summary>Format a data size provided in MB</summary>
 		public static string HumanReadableDataSize(double MB)
 		{
 			MB *= 131072.0; //< bits
@@ -729,31 +729,28 @@ namespace KERBALISM
 			return BuildString(MB.ToString("F2"), " TB");
 		}
 
-		///<summary> Format data size, the size parameter is in bits </summary>
-		public static string HumanReadableDataSize(long bits, FileType type)
+		///<summary>Format a data size provided in bit, with optional conversion to sample size</summary>
+		public static string HumanReadableDataSize(long bit, bool asSampleSize = false)
 		{
-			if (type == FileType.Sample)
-			{
-				return HumanReadableSampleSize(bits);
-			}
+			if (asSampleSize)
+				return ((double)bit / slotSize).ToString("F2");
 
-			if (bits >= 8796093022208)
-				return BuildString(((double)bits / 8796093022208).ToString("F2"), " TB");
-			if (bits >= 8589934592)
-				return BuildString(((double)bits / 8589934592).ToString("F2"), " GB");
-			if (bits >= 8388608)
-				return BuildString(((double)bits / 8388608).ToString("F2"), " MB");
-			if (bits >= 8192)
-				return BuildString(((double)bits / 8192).ToString("F2"), " KB");
-			if (bits >= 8)
-				return BuildString(((double)bits / 8).ToString("F0"), " B");
+			if (bit >= 8796093022208)
+				return BuildString(((double)bit / 8796093022208).ToString("F2"), " TB");
+			if (bit >= 8589934592)
+				return BuildString(((double)bit / 8589934592).ToString("F2"), " GB");
+			if (bit >= 8388608)
+				return BuildString(((double)bit / 8388608).ToString("F2"), " MB");
+			if (bit >= 8192)
+				return BuildString(((double)bit / 8192).ToString("F2"), " KB");
+			if (bit >= 8)
+				return BuildString(((double)bit / 8).ToString("F0"), " B");
 
-			return BuildString(bits.ToString(), " b");
+			return BuildString(bit.ToString(), " b");
 		}
 
-		///<summary> Format data utilization (x/x), the size parameter is in MB </summary>
-		// TODO : bit version
-		public static string HumanReadableDataSize(double size, double capacity)
+		///<summary>Format data utilization (x/x) provided in MB </summary>
+		public static string HumanReadableDataUsage(double size, double capacity)
 		{
 			capacity *= 131072.0; //< bits
 			if (capacity < 1.0) return "none";
@@ -768,6 +765,27 @@ namespace KERBALISM
 			if (capacity < 1024.0) return BuildString((size / 1024.0).ToString("F2"), "/", capacity.ToString("F2"), " GB");
 			capacity /= 1024.0;
 			return BuildString((size / 1048576.0).ToString("F2"), "/", capacity.ToString("F2"), " TB");
+		}
+
+		///<summary>Format data utilization (x/x) provided in bit </summary>
+		public static string HumanReadableDataUsage(long size, long capacity)
+		{
+			if (capacity >= 8796093022208)
+				return BuildString(((double)size / 8796093022208).ToString("F2"),
+					"/", ((double)capacity / 8796093022208).ToString("F2"), " TB");
+			if (capacity >= 8589934592)
+				return BuildString(((double)size / 8589934592).ToString("F2"),
+					"/", ((double)capacity / 8589934592).ToString("F2"), " GB");
+			if (capacity >= 8388608)
+				return BuildString(((double)size / 8388608).ToString("F2"),
+					"/", ((double)capacity / 8388608).ToString("F2"), " MB");
+			if (capacity >= 8192)
+				return BuildString(((double)size / 8192).ToString("F2"),
+					"/", ((double)capacity / 8192).ToString("F2"), " KB");
+			if (capacity >= 8)
+				return BuildString(((double)size / 8).ToString("F0"),
+					"/", ((double)capacity / 8).ToString("F0"), " B");
+			return BuildString(size.ToString(),"/", capacity.ToString(), " b");
 		}
 
 		///<summary> Format data rate, the rate parameter is in Mb/s </summary>
@@ -804,18 +822,18 @@ namespace KERBALISM
 		/// <summary>
 		/// convert a floating point data size in MB to an integer size in bit
 		/// </summary>
-		public static long MBToBit(double MBs)
+		public static long MBToBit(double MB)
 		{
-			double bitrate = Math.Min(MBs * 8388608, long.MaxValue);
-			return (long)bitrate;
+			double bits = Math.Min(MB * 8388608.0, long.MaxValue);
+			return (long)bits;
 		}
 
 		/// <summary>
 		/// convert an integer data size in bit to a floating point size in MB
 		/// </summary>
-		public static double BitToMB(long Bits)
+		public static double BitToMB(long bits)
 		{
-			return (double)Bits / 8388608.0;
+			return (double)bits / 8388608.0;
 		}
 
 		public const long slotSize = 8589934592;

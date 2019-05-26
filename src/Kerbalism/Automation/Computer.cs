@@ -101,8 +101,8 @@ namespace KERBALISM
 			bool radiation_low = vi.radiation < 0.000005552; //< 0.02 rad/h
 			bool radiation_high = vi.radiation > 0.00001388; //< 0.05 rad/h
 			bool signal = vi.connection.linked;
-			bool drive_full = vi.free_capacity < double.MaxValue && (vi.free_capacity / vi.total_capacity < 0.15);
-			bool drive_empty = vi.free_capacity >= double.MaxValue || (vi.free_capacity / vi.total_capacity > 0.9);
+			bool drive_full = vi.drive_fileusage > 0.9;
+			bool drive_empty = vi.drive_fileusage < 0.15;
 
 			// get current situation
 			bool landed = false;
@@ -250,8 +250,9 @@ namespace KERBALISM
 						case "Greenhouse":                   dev = new GreenhouseDevice(m as Greenhouse);                     break;
 						case "GravityRing":                  dev = new RingDevice(m as GravityRing);                          break;
 						case "Emitter":                      dev = new EmitterDevice(m as Emitter);                           break;
-						case "Laboratory":                   dev = new LaboratoryDevice(m as Laboratory);                     break;
-						case "Experiment":                   dev = new ExperimentDevice(m as Experiment);                     break;
+						//case "Laboratory":                   dev = new LaboratoryDevice(m as Laboratory);                     break;
+							// TODO : Experiment and lab device
+						//case "Experiment":                   dev = new ExperimentDevice(m as Experiment);                     break;
 						case "ModuleDeployableSolarPanel":   dev = new PanelDevice(m as ModuleDeployableSolarPanel);          break;
 						case "ModuleGenerator":              dev = new GeneratorDevice(m as ModuleGenerator);                 break;
 						case "ModuleResourceConverter":      dev = new ConverterDevice(m as ModuleResourceConverter);         break;
@@ -317,12 +318,13 @@ namespace KERBALISM
 							case "Greenhouse":                   dev = new ProtoGreenhouseDevice(m, p.flightID);                                                  break;
 							case "GravityRing":                  dev = new ProtoRingDevice(m, p.flightID);                                                        break;
 							case "Emitter":                      dev = new ProtoEmitterDevice(m, p.flightID);                                                     break;
-							case "Laboratory":                   dev = new ProtoLaboratoryDevice(m, p.flightID);                                                  break;
-							
-							case "Experiment":
-								experiments.Add(new KeyValuePair<Experiment, ProtoPartModuleSnapshot>(module_prefab as Experiment, m));
-								dev = new ProtoExperimentDevice(m, v, module_prefab as Experiment, p.flightID, experiments);
-								break;
+							// case "Laboratory":                   dev = new ProtoLaboratoryDevice(m, p.flightID);                                                  break;
+
+								// TODO : EXPERIMENT AND LAB DEVICE
+							//case "Experiment":
+							//	experiments.Add(new KeyValuePair<Experiment, ProtoPartModuleSnapshot>(module_prefab as Experiment, m));
+							//	dev = new ProtoExperimentDevice(m, v, module_prefab as Experiment, p.flightID, experiments);
+							//	break;
 
 							case "ModuleDeployableSolarPanel":   dev = new ProtoPanelDevice(m, module_prefab as ModuleDeployableSolarPanel, p.flightID);          break;
 							case "ModuleGenerator":              dev = new ProtoGeneratorDevice(m, module_prefab as ModuleGenerator, p.flightID);                 break;

@@ -21,7 +21,6 @@ namespace KERBALISM
 			cfg_script = PreferencesMessages.Instance.script;
 			cfg_highlights = PreferencesBasic.Instance.highlights;
 			cfg_showlink = true;
-			cfg_smartscience = true;
 			storm_time = 0.0;
 			storm_age = 0.0;
 			storm_state = 0;
@@ -43,7 +42,6 @@ namespace KERBALISM
 			cfg_script = Lib.ConfigValue(node, "cfg_script", PreferencesMessages.Instance.script);
 			cfg_highlights = Lib.ConfigValue(node, "cfg_highlights", PreferencesBasic.Instance.highlights);
 			cfg_showlink = Lib.ConfigValue(node, "cfg_showlink", true);
-			cfg_smartscience = Lib.ConfigValue(node, "cfg_smartscience", true);
 			storm_time = Lib.ConfigValue(node, "storm_time", 0.0);
 			storm_age = Lib.ConfigValue(node, "storm_age", 0.0);
 			storm_state = Lib.ConfigValue(node, "storm_state", 0u);
@@ -75,7 +73,6 @@ namespace KERBALISM
 			node.AddValue("cfg_script", cfg_script);
 			node.AddValue("cfg_highlights", cfg_highlights);
 			node.AddValue("cfg_showlink", cfg_showlink);
-			node.AddValue("cfg_smartscience", cfg_smartscience);
 			node.AddValue("storm_time", storm_time);
 			node.AddValue("storm_age", storm_age);
 			node.AddValue("storm_state", storm_state);
@@ -103,34 +100,6 @@ namespace KERBALISM
 			return supplies[name];
 		}
 
-
-		public ExperimentProcess GetExperimentProcess(Part part, string exp_variant_id)
-		{
-			for (int i = 0; i < experiments.Count; i++)
-			{
-				if (experiments[i].partId == part.flightID
-					&& experiments[i].expVar.id == exp_variant_id)
-					return experiments[i];
-			}
-			return null;
-		}
-
-		public ExperimentProcess AddExperimentProcess(Part part, string exp_variant_id, double sample_amount, bool recording, bool forcedRun)
-		{
-			// having duplicates of an experiment on the same part is unsupported
-			ExperimentProcess process = GetExperimentProcess(part, exp_variant_id);
-			if (process != null)
-			{
-				Lib.Log("WARNING : part '" + part.name + "' has a duplicate of experiment '" + exp_variant_id + "'");
-			}
-			else
-			{
-				process = new ExperimentProcess(part, exp_variant_id, sample_amount, recording, forcedRun);
-				experiments.Add(process);
-			}
-			return process;
-		}
-
 		public bool msg_signal;       // message flag: link status
 		public bool msg_belt;         // message flag: crossing radiation belt
 		public bool cfg_ec;           // enable/disable message: ec level
@@ -141,7 +110,6 @@ namespace KERBALISM
 		public bool cfg_script;       // enable/disable message: scripts
 		public bool cfg_highlights;   // show/hide malfunction highlights
 		public bool cfg_showlink;     // show/hide link line
-		public bool cfg_smartscience; // enable automatic experiement enabling/disabling
 		public double storm_time;     // time of next storm (interplanetary CME)
 		public double storm_age;      // time since last storm (interplanetary CME)
 		public uint storm_state;      // 0: none, 1: inbound, 2: in progress (interplanetary CME)
@@ -149,15 +117,6 @@ namespace KERBALISM
 		public Computer computer;     // store scripts
 		public Dictionary<string, SupplyData> supplies; // supplies data
 		public List<uint> scansat_id; // used to remember scansat sensors that were disabled
-
-		// TODO : check performance using different type options
-		// - most intensive use will be iterating over all elements in Science.Update() -> List is better
-		// - second use is querying the ExpProcess from the partmodule.OnLoad/OnStart -> dictionary could be better
-		// - because multiple experiements per part, would need a Dictionary<partId, ExpProcess[]> -> not great
-		/// <summary>
-		/// all ExperimentProcess for the vessel. Get/Add/Remove trough the *ExperimentProcess methods
-		/// </summary>
-		public List<ExperimentProcess> experiments;
 	}
 
 

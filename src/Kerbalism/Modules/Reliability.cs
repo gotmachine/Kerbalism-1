@@ -502,15 +502,16 @@ namespace KERBALISM
 					}
 					break;
 
-				case "Experiment":
-					if (b)
-					{
-						foreach (PartModule m in modules)
-						{
-							(m as Experiment).ReliablityEvent(b);
-						}
-					}
-					break;
+					// TODO : Dataprocess reliability
+				//case "Experiment":
+				//	if (b)
+				//	{
+				//		foreach (PartModule m in modules)
+				//		{
+				//			(m as Experiment).ReliablityEvent(b);
+				//		}
+				//	}
+				//	break;
 			}
 
 			API.Failure.Notify(part, type, b);

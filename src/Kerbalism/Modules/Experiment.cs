@@ -11,11 +11,7 @@ namespace KERBALISM
 		// config
 
 		// id of the "EXPERIMENT_VARIANT"
-		[KSPField] public string exp_variant_id;                 
-
-		// amount of "blank" samples, if set to 0 the experiment will generate a file
-		// sample mass added to the module will be sample_amount * experiment_variant.sample_mass
-		[KSPField] public int sample_amount = 0;
+		[KSPField] public string variantId;                 
 
 		// don't show UI when the experiment is unavailable
 		[KSPField] public bool hide_when_unavailable = false;	
@@ -28,8 +24,8 @@ namespace KERBALISM
 		[KSPField] public bool anim_loop_reverse = false;
 
 		// for prefab/editor only. Never use in flight, get them from the ExperimentProcess object
-		[KSPField(isPersistant = true)] private bool editorRecording = false;
-		[KSPField(isPersistant = true)] private bool editorForcedRun = false;
+		[KSPField(isPersistant = true)] public bool editorRecording = false;
+		[KSPField(isPersistant = true)] public bool editorForcedRun = false;
 		[KSPField(isPersistant = true)] private bool flightProcessCreated = false;
 
 		// animations
@@ -46,36 +42,16 @@ namespace KERBALISM
 		private CrewSpecs reset_cs;
 		private CrewSpecs prepare_cs;
 
-
 		public override void OnLoad(ConfigNode node)
 		{
-			// Create a dummy process for the prefab and in the editor
-			if (Lib.IsEditor() || HighLogic.LoadedScene == GameScenes.LOADING)
-			{
-				process = new ExperimentProcess(part, exp_variant_id, sample_amount, editorRecording, editorForcedRun);
-
-				// TODO : why is this necessary ?
-				// if (IsSample()) GameEvents.onEditorShipModified.Fire(EditorLogic.fetch.ship);
-			}
-
-			// in flight get/add the process from the DB
-			if (Lib.IsFlight())
-			{
-				if (flightProcessCreated)
-				{
-					process = DB.Vessel(vessel).GetExperimentProcess(part, exp_variant_id);
-				}
-				else
-				{
-					process = DB.Vessel(vessel).AddExperimentProcess(part, exp_variant_id, sample_amount, editorRecording, editorForcedRun);
-					if (process != null) flightProcessCreated = true;
-				}
-			}
+			process = DataProcess.GetProcessOnPartModuleLoad<ExperimentProcess>(this, variantId);
 
 			// sanity checks :
-			if (process == null || process.expVar == null || process.expVar.exp_info == null)
+			if (process != null && (process.expVar == null || process.expVar.expInfo == null))
 			{
-				Lib.Log("ERROR : failed loading process for experiment module '" + exp_variant_id + "' on part '" + part.name);
+				Lib.Log("ERROR : failed loading process for experiment module '" + variantId + "' on part '" + part.name);
+				DB.RemoveDataProcess(part.flightID, process);
+				// maybe we should also clear the VesselObjectCache
 				process = null;
 			}
 		}
@@ -127,7 +103,7 @@ namespace KERBALISM
 				if (!vi.is_valid) return;
 
 				// update ui
-				var title = Lib.Ellipsis(process.expVar.exp_info.experimentTitle, Styles.ScaleStringLength(24));
+				var title = Lib.Ellipsis(process.expVar.expInfo.title, Styles.ScaleStringLength(24));
 
 				// TODO : UI : one toggle that show/hide all other PAW elements, label = status + % done
 				// - toggle : start/stop -> label = ETA
@@ -197,29 +173,29 @@ namespace KERBALISM
 				return specs;
 			}
 
-			specs.Add(Lib.BuildString("<b>", process.expVar.exp_info.experimentTitle, "</b>"));
-			if (!string.IsNullOrEmpty(process.expVar.experiment_desc))
+			specs.Add(Lib.BuildString("<b>", process.expVar.expInfo.title, "</b>"));
+			if (!string.IsNullOrEmpty(process.expVar.experimentDesc))
 			{
-				specs.Add(Lib.BuildString("<i>", process.expVar.experiment_desc, "</i>"));
+				specs.Add(Lib.BuildString("<i>", process.expVar.experimentDesc, "</i>"));
 			}
 
 			specs.Add(string.Empty);
 			//double expSize = exp_variant.data_max;
 			if (process.type == FileType.File)
 			{
-				specs.Add("Data size", Lib.HumanReadableDataSize(process.expVar.exp_info.dataSize));
-				specs.Add("Data rate", Lib.HumanReadableDataRate(process.expVar.data_rate));
+				specs.Add("Data size", Lib.HumanReadableDataSize(process.expVar.expInfo.fullSize));
+				specs.Add("Data rate", Lib.HumanReadableDataRate(process.expVar.dataRate));
 			}
 			else
 			{
-				specs.Add("Sample size", Lib.HumanReadableSampleSize(process.expVar.exp_info.dataSize));
-				specs.Add("Sample mass", Lib.HumanReadableMass(process.expVar.exp_info.sample_mass));
-				if (!process.expVar.sample_collecting)
-					specs.Add("Sample amount", sample_amount.ToString());
+				specs.Add("Sample size", Lib.HumanReadableSampleSize(process.expVar.expInfo.fullSize));
+				specs.Add("Sample mass", Lib.HumanReadableMass(process.expVar.expInfo.sampleMass));
+				if (!process.expVar.sampleCollecting)
+					specs.Add("Sample amount", process.expVar.sampleAmount.ToString());
 			}
-			specs.Add("Duration", Lib.HumanReadableDuration((double)process.expVar.exp_info.dataSize / process.expVar.data_rate));
+			specs.Add("Duration", Lib.HumanReadableDuration((double)process.expVar.expInfo.fullSize / process.expVar.dataRate));
 
-			List<string> situations = process.expVar.exp_info.Situations();
+			List<string> situations = process.expVar.expInfo.Situations();
 			if (situations.Count > 0)
 			{
 				specs.Add(string.Empty);
@@ -230,7 +206,7 @@ namespace KERBALISM
 			specs.Add(string.Empty);
 			specs.Add("<color=#00ffff>Needs:</color>");
 
-			specs.Add("EC", Lib.HumanReadableRate(process.expVar.ec_rate));
+			specs.Add("EC", Lib.HumanReadableRate(process.expVar.ecRate));
 			foreach (var p in process.expVar.res_parsed)
 				specs.Add(p.key, Lib.HumanReadableRate(p.value));
 

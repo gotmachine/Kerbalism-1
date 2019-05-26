@@ -294,6 +294,9 @@ namespace KERBALISM
 
 
 		// --- SCIENCE --------------------------------------------------------------
+		// TODO : SCIENCE API
+
+			/*
 
 		// return size of a file in a vessel drive
 		// TODO : this is wrong, a single subject_id can be sliced in multiple drives
@@ -395,6 +398,7 @@ namespace KERBALISM
 				}
 			}
 		}
+		*/
 
 		// --- FAILURES --------------------------------------------------------------
 

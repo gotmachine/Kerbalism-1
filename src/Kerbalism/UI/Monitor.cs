@@ -615,11 +615,17 @@ namespace KERBALISM
 			string target_str = conn.linked ? conn.target_name : Localizer.Format("#KERBALISM_Generic_NONE");
 
 			// transmitting info
-			string comms_str = conn.linked ? Localizer.Format("#KERBALISM_UI_telemetry") : Localizer.Format("#KERBALISM_Generic_NOTHING");
-			if (vi.transmitting.Length > 0)
+			string comms_str;
+			if (conn.linked)
 			{
-				ExperimentVariant exp = Science.Experiment(vi.transmitting);
-				comms_str = exp.title;
+				if (vi.transmitting_rate > 0)
+					comms_str = Lib.HumanReadableDataRate(vi.transmitting_rate);
+				else
+					comms_str = Localizer.Format("#KERBALISM_UI_telemetry");
+			}
+			else
+			{
+				comms_str = Localizer.Format("#KERBALISM_Generic_NOTHING");
 			}
 
 			// create tooltip

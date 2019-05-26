@@ -7,7 +7,9 @@ using KSP.Localization;
 namespace KERBALISM
 {
 
+	// TODO : REWRITE THE DEVICE
 
+	/*
 	public sealed class ExperimentDevice : Device
 	{
 		public ExperimentDevice(Experiment exp)
@@ -150,7 +152,7 @@ namespace KERBALISM
 		private readonly string title;
 		private readonly List<KeyValuePair<Experiment, ProtoPartModuleSnapshot>> allExperiments;
 	}
-
+	*/
 
 } // KERBALISM
 
