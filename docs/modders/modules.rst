@@ -180,6 +180,7 @@ Here is a list of currently supported requirements:
 * AtmosphereBody: vessel must be within the SOI of a body with atmosphere
 * AtmosphereAltMin / AtmosphereAltMax: Altitude of vessel as a multiplier of atmosphere thickness. On Kerbin, AtmosphereAltMin:1 equals 70km.
 * Vacuum: the opposite of Atmosphere
+* BodyWithAtmosphere, BodyWithoutAtmosphere: does what it says on the tin.
 * Ocean: vessel must be submerged
 * PlanetarySpace: in planetary space, i.e. not around the sun
 * AbsoluteZero: temperature < 30 K
@@ -197,7 +198,7 @@ Here is a list of currently supported requirements:
 * VolumePerCrewMin, VolumePerCrewMax: min./max. habitat volume per crew member
 * Facility building levels: MissionControlLevelMin, MissionControlLevelMax, AdministrationLevelMin, AdministrationLevelMax, TrackingStationLevelMin, TrackingStationLevelMax, AstronautComplexLevelMin, AstronautComplexLevelMax
 * MaxAsteroidDistance: max. distance to the nearest asteroid. For unloaded vessels this only works if the asteroid is set as the target.
-* Part: name of the part the experiment has to be on
+* Part: name (or any of multiple names, separated by comma) of a part that has to be anywhere on the vessel
 * Module: name of a module that is required anywhere on the vessel
 * SunAngleMin, SunAngleMax: min./max. angle of sunlight on the surface of the body
 

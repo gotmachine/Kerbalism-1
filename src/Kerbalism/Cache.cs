@@ -94,7 +94,7 @@ namespace KERBALISM
 			// habitat data
 			volume = Habitat.Tot_volume(v);
 			surface = Habitat.Tot_surface(v);
-			pressure = Math.Max(max_pressure, Habitat.Pressure(v));
+			pressure = Math.Min(max_pressure, Habitat.Pressure(v));
 			evas = (uint)(Math.Max(0, ResourceCache.Info(v, "Nitrogen").amount - 330) / PreferencesLifeSupport.Instance.evaAtmoLoss);
 			poisoning = Habitat.Poisoning(v);
 			humidity = Habitat.Humidity(v);
@@ -187,6 +187,7 @@ namespace KERBALISM
 		{
 			vessels = new Dictionary<Guid, Vessel_info>();
 			vesselObjects = new Dictionary<Guid, Dictionary<string, object>>();
+			warp_caches = new Dictionary<Guid, Drive>();
 			next_inc = 0;
 		}
 
@@ -194,6 +195,7 @@ namespace KERBALISM
 		public static void Clear()
 		{
 			vessels.Clear();
+			warp_caches.Clear();
 			vesselObjects.Clear();
 			next_inc = 0;
 		}
@@ -221,6 +223,7 @@ namespace KERBALISM
 			var id = Lib.VesselID(v);
 			vessels.Remove(id);
 			vesselObjects.Remove(id);
+			warp_caches.Remove(id);
 		}
 
 		/// <summary>
@@ -232,11 +235,13 @@ namespace KERBALISM
 			var id = Lib.VesselID(v);
 			vessels.Remove(id);
 			vesselObjects.Remove(id);
+			warp_caches.Remove(id);
 		}
 
 		public static void PurgeObjects()
 		{
-			vesselObjects.Clear();	
+			vesselObjects.Clear();
+			warp_caches.Clear();
 		}
 
 		public static void Update()
@@ -281,6 +286,20 @@ namespace KERBALISM
 
 			// return the vessel info
 			return info;
+		}
+
+		public static Drive WarpCache(Vessel v)
+		{
+			Guid id = Lib.VesselID(v);
+
+			// get from the cache, if it exist
+			Drive drive;
+			if (warp_caches.TryGetValue(id, out drive))
+				return drive;
+			
+			drive = new Drive("warp cache drive", 0, 0);
+			warp_caches.Add(id, drive);
+			return drive;
 		}
 
 		internal static T VesselObjectsCache<T>(Vessel vessel, string key)
@@ -367,6 +386,7 @@ namespace KERBALISM
 
 		// caches
 		private static Dictionary<Guid, Vessel_info> vessels;
+		private static Dictionary<Guid, Drive> warp_caches;
 		private static Dictionary<Guid, Dictionary<string, System.Object>> vesselObjects;
 
 		// used to generate unique id

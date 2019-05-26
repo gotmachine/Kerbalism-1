@@ -99,6 +99,8 @@ namespace KERBALISM
 					Science.RegisterSampleMass(experiment_id, sample_mass);
 				}
 			}
+
+			base.OnLoad(node);
 		}
 
 		public override void OnStart(StartState state)
@@ -106,7 +108,8 @@ namespace KERBALISM
 			// don't break tutorial scenarios
 			if (Lib.DisableScenario(this)) return;
 
-			if (remainingSampleMass < float.Epsilon && string.IsNullOrEmpty(issue))
+			// initialize the remaining sample mass in case it was not configured in the cfg.
+			if (remainingSampleMass < float.Epsilon && string.IsNullOrEmpty(issue) && !sample_collecting)
 			{
 				remainingSampleMass = sample_mass;
 				if (sample_reservoir > float.Epsilon)
@@ -136,7 +139,7 @@ namespace KERBALISM
 			if (!string.IsNullOrEmpty(crew_prepare))
 				prepare_cs = new CrewSpecs(crew_prepare);
 
-			resourceDefs = ParseResources(resources);
+			resourceDefs = KerbalismProcess.ParseResources(resources);
 
 			foreach (var hd in part.FindModulesImplementing<HardDrive>())
 			{
@@ -273,6 +276,7 @@ namespace KERBALISM
 			var stored = DoRecord(this, subject_id, vessel, ec, privateHdId,
 				ResourceCache.Get(vessel), resourceDefs,
 				remainingSampleMass, dataSampled, out dataSampled, out remainingSampleMass);
+
 			if (!stored) issue = insufficient_storage;
 		}
 
@@ -286,17 +290,17 @@ namespace KERBALISM
 			return drive;
 		}
 
-
 		private static bool DoRecord(Experiment experiment, string subject_id, Vessel vessel, Resource_info ec, uint hdId, 
 			Vessel_resources resources, List<KeyValuePair<string, double>> resourceDefs,
 			double remainingSampleMass, double dataSampled,
 			out double sampledOut, out double remainingSampleMassOut)
 		{
-			var exp = Science.Experiment(subject_id);
+			// default output values for early returns
+			sampledOut = dataSampled;
+			remainingSampleMassOut = remainingSampleMass;
 
+			var exp = Science.Experiment(subject_id);
 			if (Done(exp, dataSampled)) {
-				sampledOut = dataSampled;
-				remainingSampleMassOut = remainingSampleMass;
 				return true;
 			}
 
@@ -309,42 +313,74 @@ namespace KERBALISM
 			// on high time warp this chunk size could be too big, but we could store a sizable amount if we process less
 			bool isFile = experiment.sample_mass < float.Epsilon;
 			double maxCapacity = isFile ? drive.FileCapacityAvailable() : drive.SampleCapacityAvailable(subject_id);
-			if (maxCapacity < chunkSize)
-			{
-				double factor = maxCapacity / chunkSize;
-				chunkSize *= factor;
-				massDelta *= factor;
-				elapsed *= factor;
+
+			Drive warpCacheDrive = null;
+			if(isFile) {
+				if (drive.GetFileSend(subject_id)) warpCacheDrive = Cache.WarpCache(vessel);
+				if (warpCacheDrive != null) maxCapacity += warpCacheDrive.FileCapacityAvailable();
 			}
 
-			foreach(var p in resourceDefs)
-				resources.Consume(vessel, p.Key, p.Value * elapsed, "experiment");
+			double factor = Rate(vessel, chunkSize, maxCapacity, elapsed, ec, experiment.ec_rate, resources, resourceDefs);
+			if (factor < double.Epsilon)
+				return false;
+
+			chunkSize *= factor;
+			massDelta *= factor;
+			elapsed *= factor;
 
 			bool stored = false;
-			if (isFile)
-				stored = drive.Record_file(subject_id, chunkSize, true);
-			else
-				stored = drive.Record_sample(subject_id, chunkSize, massDelta);
-
-			if (stored)
+			if (chunkSize > double.Epsilon)
 			{
-				// consume ec
-				ec.Consume(experiment.ec_rate * elapsed, "experiment");
-				dataSampled += chunkSize;
-				dataSampled = Math.Min(dataSampled, exp.max_amount);
-				sampledOut = dataSampled;
-				if (!experiment.sample_collecting)
+				if (isFile)
 				{
-					remainingSampleMass -= massDelta;
-					remainingSampleMass = Math.Max(remainingSampleMass, 0);
+					if (warpCacheDrive != null)
+					{
+						double s = Math.Min(chunkSize, warpCacheDrive.FileCapacityAvailable());
+						stored = warpCacheDrive.Record_file(subject_id, s, true);
+
+						if(chunkSize > s) // only write to persisted drive if the data cannot be transmitted in this tick
+							stored &= drive.Record_file(subject_id, chunkSize - s, true);
+					}
+					else
+					{
+						stored = drive.Record_file(subject_id, chunkSize, true);
+					}
 				}
-				remainingSampleMassOut = remainingSampleMass;
-				return true;
+				else
+					stored = drive.Record_sample(subject_id, chunkSize, massDelta);
 			}
 
+			if (!stored)
+				return false;
+
+			// consume resources
+			ec.Consume(experiment.ec_rate * elapsed, "experiment");
+			foreach (var p in resourceDefs)
+				resources.Consume(vessel, p.Key, p.Value * elapsed, "experiment");
+
+			dataSampled += chunkSize;
+			dataSampled = Math.Min(dataSampled, exp.max_amount);
 			sampledOut = dataSampled;
+			if (!experiment.sample_collecting)
+			{
+				remainingSampleMass -= massDelta;
+				remainingSampleMass = Math.Max(remainingSampleMass, 0);
+			}
 			remainingSampleMassOut = remainingSampleMass;
-			return false;
+			return true;
+		}
+
+		private static double Rate(Vessel v, double chunkSize, double maxCapacity, double elapsed, Resource_info ec, double ec_rate, Vessel_resources resources, List<KeyValuePair<string, double>> resourceDefs)
+		{
+			double result = Lib.Clamp(maxCapacity / chunkSize, 0, 1);
+			result = Math.Min(result, Lib.Clamp(ec.amount / (ec_rate * elapsed), 0, 1));
+
+			foreach (var p in resourceDefs) {
+				var ri = resources.Info(v, p.Key);
+				result = Math.Min(result, Lib.Clamp(ri.amount / (p.Value * elapsed), 0, 1));
+			}
+
+			return result;
 		}
 
 		public static void BackgroundUpdate(Vessel v, ProtoPartModuleSnapshot m, Experiment experiment, Resource_info ec, Vessel_resources resources, double elapsed_s)
@@ -362,7 +398,7 @@ namespace KERBALISM
 			string issue = TestForIssues(v, ec, experiment, privateHdId, broken,
 				remainingSampleMass, didPrepare, shrouded, noGroundContact, last_subject_id);
 			if(string.IsNullOrEmpty(issue))
-				issue = TestForResources(v, ParseResources(experiment.resources), elapsed_s, resources);
+				issue = TestForResources(v, KerbalismProcess.ParseResources(experiment.resources), elapsed_s, resources);
 
 			Lib.Proto.Set(m, "issue", issue);
 
@@ -390,7 +426,7 @@ namespace KERBALISM
 				return;
 
 			var stored = DoRecord(experiment, subject_id, v, ec, privateHdId,
-				resources, ParseResources(experiment.resources),
+				resources, KerbalismProcess.ParseResources(experiment.resources),
 				remainingSampleMass, dataSampled, out dataSampled, out remainingSampleMass);
 			if (!stored) Lib.Proto.Set(m, "issue", insufficient_storage);
 
@@ -451,25 +487,6 @@ namespace KERBALISM
 			return string.Empty;
 		}
 
-		private static List<KeyValuePair<string, double>> ParseResources(string resources, bool logErros = false)
-		{
-			var reslib = PartResourceLibrary.Instance.resourceDefinitions;
-
-			List<KeyValuePair<string, double>> defs = new List<KeyValuePair<string, double>>();
-			foreach (string s in Lib.Tokenize(resources, ','))
-			{
-				// definitions are Resource@rate
-				var p = Lib.Tokenize(s, '@');
-				if (p.Count != 2) continue;				// malformed definition
-				string res = p[0];
-				if (!reslib.Contains(res)) continue;	// unknown resource
-				double rate = double.Parse(p[1]);
-				if (res.Length < 1 || rate < double.Epsilon) continue;	// rate <= 0
-				defs.Add(new KeyValuePair<string, double>(res, rate));
-			}
-			return defs;
-		}
-
 		private static string TestForIssues(Vessel v, Resource_info ec, Experiment experiment, uint hdId, bool broken,
 			double remainingSampleMass, bool didPrepare, bool isShrouded, bool noGroundContact, string last_subject_id)
 		{
@@ -513,7 +530,13 @@ namespace KERBALISM
 			Drive drive = GetDrive(experiment, v, hdId, chunkSize, subject_id);
 
 			var isFile = experiment.sample_mass < double.Epsilon;
-			double available = isFile ? drive.FileCapacityAvailable() : drive.SampleCapacityAvailable(subject_id);
+			double available = 0;
+			if(isFile) {
+				available = drive.FileCapacityAvailable();
+				available += Cache.WarpCache(v).FileCapacityAvailable();
+			} else {
+				available = drive.SampleCapacityAvailable(subject_id);
+			}
 
 			if (Math.Min(experiment.data_rate * Kerbalism.elapsed_s, experimentSize) > available)
 				return insufficient_storage;
@@ -618,9 +641,9 @@ namespace KERBALISM
 			return false;
 		}
 
-		public static void PostMultipleRunsMessage(string title)
+		public static void PostMultipleRunsMessage(string title, string vesselName)
 		{
-			Message.Post(Lib.Color("red", "ALREADY RUNNING", true), "Can't start " + title + " a second time on the same vessel");
+			Message.Post(Lib.Color("yellow", "ALREADY RUNNING", true), "Can't start " + title + " a second time on vessel " + vesselName);
 		}
 
 		[KSPEvent(guiActiveUnfocused = true, guiActive = true, guiActiveEditor = true, guiName = "_", active = true)]
@@ -631,7 +654,7 @@ namespace KERBALISM
 				if(!recording)
 				{
 					recording = EditorTracker.Instance.AllowStart(this);
-					if (!recording) PostMultipleRunsMessage(Science.Experiment(experiment_id).name);
+					if (!recording) PostMultipleRunsMessage(Science.Experiment(experiment_id).name, "");
 				}
 				else
 					recording = !recording;
@@ -660,7 +683,7 @@ namespace KERBALISM
 			if (!recording)
 			{
 				recording = !IsExperimentRunningOnVessel();
-				if(!recording) PostMultipleRunsMessage(Science.Experiment(experiment_id).name);
+				if(!recording) PostMultipleRunsMessage(Science.Experiment(experiment_id).name, vessel.vesselName);
 			}
 			else
 				recording = false;
@@ -668,7 +691,7 @@ namespace KERBALISM
 			if (!recording)
 			{
 				dataSampled = 0;
-				forcedRun = false;
+					forcedRun = false;
 			}
 
 			var new_recording = recording;
@@ -766,7 +789,7 @@ namespace KERBALISM
 			specs.Add("<color=#00ffff>Needs:</color>");
 
 			specs.Add("EC", Lib.HumanReadableRate(ec_rate));
-			foreach(var p in ParseResources(resources))
+			foreach(var p in KerbalismProcess.ParseResources(resources))
 				specs.Add(p.Key, Lib.HumanReadableRate(p.Value));
 
 			if (crew_prepare.Length > 0)

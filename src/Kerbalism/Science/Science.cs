@@ -59,61 +59,93 @@ namespace KERBALISM
 
 			// get connection info
 			ConnectionInfo conn = vi.connection;
-			if (conn == null || String.IsNullOrEmpty(vi.transmitting)) return;
+			if (conn == null) return;
+			if (String.IsNullOrEmpty(vi.transmitting)) return;
 
-			// get filename of data being downloaded
-			var exp_filename = vi.transmitting;
+			Drive warpCache = Cache.WarpCache(v);
+			bool isWarpCache = false;
 
-			var drive = FindDrive(v, exp_filename);
-
-			// if some data is being downloaded
-			// - avoid cornercase at scene changes
-			if (exp_filename.Length > 0 && drive != null)
+			double transmitSize = conn.rate * elapsed_s;
+			while(warpCache.files.Count > 0 || // transmit EVERYTHING in the cache, regardless of transmitSize.
+			      (transmitSize > double.Epsilon && !String.IsNullOrEmpty(vi.transmitting)))
 			{
-				// get file
+				// get filename of data being downloaded
+				var exp_filename = vi.transmitting;
+				if (string.IsNullOrEmpty(exp_filename))
+					break;
+
+				Drive drive = null;
+				if (warpCache.files.ContainsKey(exp_filename)) {
+					drive = warpCache;
+					isWarpCache = true;
+				}
+				else
+				{
+					drive = FindDrive(v, exp_filename);
+					isWarpCache = false;
+				}
+
+				if (drive == null) break;
+
 				File file = drive.files[exp_filename];
 
-				// determine how much data is transmitted
-				double transmitted = Math.Min(file.size, conn.rate * elapsed_s);
+				if(isWarpCache) {
+					file.buff = file.size;
+					file.size = 0;
+					transmitSize -= file.size;
+				} else {
+					if (transmitSize < double.Epsilon)
+						break;
 
-				// consume data in the file
-				file.size -= transmitted;
+					// determine how much data is transmitted
+					double transmitted = Math.Min(file.size, transmitSize);
+					transmitSize -= transmitted;
 
-				// accumulate in the buffer
-				file.buff += transmitted;
+					// consume data in the file
+					file.size -= transmitted;
 
-				bool credit = file.size <= double.Epsilon;
+					// accumulate in the buffer
+					file.buff += transmitted;
+				}
 
-				// this is the science value remaining for this experiment
-				var remainingValue = Value(exp_filename, 0);
-
-				// this is the science value of this sample
-				var dataValue = Value(exp_filename, file.buff);
-
-				if (!credit && file.buff > min_buffer_size) credit = dataValue > buffer_science_value;
-
-				// if buffer is full, or file was transmitted completely
-				if (credit)
+				// special case: file size on drive = 0 -> buffer is 0, so no need to do anyhting. just delete.
+				if (file.buff > double.Epsilon)
 				{
-					var totalValue = TotalValue(exp_filename);
+					bool credit = file.size <= double.Epsilon;
 
-					// collect the science data
-					Credit(exp_filename, file.buff, true, v.protoVessel);
+					// this is the science value remaining for this experiment
+					var remainingValue = Value(exp_filename, 0);
 
-					// reset the buffer
-					file.buff = 0.0;
+					// this is the science value of this sample
+					double dataValue = Value(exp_filename, file.buff);
 
-					// this was the last useful bit, there is no more value in the experiment
-					if (remainingValue >= 0.1 && remainingValue - dataValue < 0.1)
+					if (!credit && file.buff > min_buffer_size) credit = dataValue > buffer_science_value;
+
+					// if buffer is full, or file was transmitted completely
+					if (credit)
 					{
-						
-						Message.Post(
-							Lib.BuildString(Lib.HumanReadableScience(totalValue), " ", Experiment(exp_filename).FullName(exp_filename), " completed"),
-						  Lib.TextVariant(
-								"Our researchers will jump on it right now",
-								"There is excitement because of your findings",
-								"The results are causing a brouhaha in R&D"
-							));
+						var totalValue = TotalValue(exp_filename);
+
+						// collect the science data
+						Credit(exp_filename, file.buff, true, v.protoVessel);
+
+						// reset the buffer
+						file.buff = 0.0;
+
+						// this was the last useful bit, there is no more value in the experiment
+						if (remainingValue >= 0.1 && remainingValue - dataValue < 0.1)
+						{
+
+							Message.Post(
+								Lib.BuildString(Lib.HumanReadableScience(totalValue), " ", Experiment(exp_filename).FullName(exp_filename), " completed"),
+							  Lib.TextVariant(
+									"Our researchers will jump on it right now",
+									"This cause some excitement",
+									"These results are causing a brouhaha in R&D",
+									"Our scientists look very confused",
+									"The scientists won't believe these readings"
+								));
+						}
 					}
 				}
 
@@ -122,6 +154,7 @@ namespace KERBALISM
 				{
 					// remove the file
 					drive.files.Remove(exp_filename);
+					vi.transmitting = Science.Transmitting(v, true);
 				}
 			}
 		}
@@ -137,6 +170,9 @@ namespace KERBALISM
 
 			// not transmitting if there is no ec left
 			if (ResourceCache.Info(v, "ElectricCharge").amount <= double.Epsilon) return string.Empty;
+
+			foreach(var p in Cache.WarpCache(v).files)
+				return p.Key;
 
 			// get first file flagged for transmission, AND has a ts at least 5 seconds old or is > 0.001Mb in size
 			foreach (var drive in Drive.GetDrives(v, true))
@@ -336,8 +372,8 @@ namespace KERBALISM
 				bool good = true;
 				switch (condition)
 				{
-					case "OrbitMinInclination": good = v.orbit.inclination >= double.Parse(value); break;
-					case "OrbitMaxInclination": good = v.orbit.inclination <= double.Parse(value); break;
+					case "OrbitMinInclination": good = Math.Abs(v.orbit.inclination) >= double.Parse(value); break;
+					case "OrbitMaxInclination": good = Math.Abs(v.orbit.inclination) <= double.Parse(value); break;
 					case "OrbitMinEccentricity": good = v.orbit.eccentricity >= double.Parse(value); break;
 					case "OrbitMaxEccentricity": good = v.orbit.eccentricity <= double.Parse(value); break;
 					case "OrbitMinArgOfPeriapsis": good = v.orbit.argumentOfPeriapsis >= double.Parse(value); break;
@@ -365,7 +401,10 @@ namespace KERBALISM
 					case "AtmosphereBody": good = body.atmosphere; break;
 					case "AtmosphereAltMin": good = body.atmosphere && (v.altitude / body.atmosphereDepth) >= double.Parse(value); break;
 					case "AtmosphereAltMax": good = body.atmosphere && (v.altitude / body.atmosphereDepth) <= double.Parse(value); break;
-						                     
+
+					case "BodyWithAtmosphere": good = body.atmosphere; break;
+					case "BodyWithoutAtmosphere": good = !body.atmosphere; break;
+						
 					case "SunAngleMin": good = Lib.SunBodyAngle(v) >= double.Parse(value); break;
 					case "SunAngleMax": good = Lib.SunBodyAngle(v) <= double.Parse(value); break;
 
@@ -437,6 +476,10 @@ namespace KERBALISM
 			var subject_id = Science.Generate_subject_id(experiment_id, v);
 			var exp = Science.Experiment(subject_id);
 			var sit = GetExperimentSituation(v);
+
+			if (!v.loaded && sit.AtmosphericFlight())
+				return "Background flight";
+
 			if (!sit.IsAvailable(exp))
 				return "Invalid situation";
 
@@ -532,8 +575,8 @@ namespace KERBALISM
 				case "VolumePerCrewMax": return Lib.BuildString("Max. vol./crew ", Lib.HumanReadableVolume(double.Parse(value)));
 				case "MaxAsteroidDistance": return Lib.BuildString("Max. asteroid distance ", Lib.HumanReadableRange(double.Parse(value)));
 
-				case "SunAngleMin": return Lib.BuildString("Min. sunlight angle ", Lib.HumanReadableAngle(double.Parse(value)));
-				case "SunAngleMax": return Lib.BuildString("Max. sunlight angle ", Lib.HumanReadableAngle(double.Parse(value)));
+				case "SunAngleMin": return Lib.BuildString("Min. sun angle ", Lib.HumanReadableAngle(double.Parse(value)));
+				case "SunAngleMax": return Lib.BuildString("Max. sun angle ", Lib.HumanReadableAngle(double.Parse(value)));
 					
 				case "AtmosphereBody": return "Body with atmosphere";
 				case "AtmosphereAltMin": return Lib.BuildString("Min. atmosphere altitude ", value);
