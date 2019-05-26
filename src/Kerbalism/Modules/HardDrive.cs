@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using UnityEngine;
 
 
@@ -10,59 +12,43 @@ namespace KERBALISM
 	public sealed class HardDrive : PartModule, IScienceDataContainer, ISpecifics, IModuleInfo, IPartMassModifier
 	{
 		[KSPField] public double dataCapacity = -1;             // drive capacity, in Mb. -1 = unlimited
-		[KSPField] public int sampleCapacity = -1;              // drive capacity, in slots. -1 = unlimited
-		[KSPField] public string title = "Kerbodyne ZeroBit";   // drive name to be displayed in file manager
+		[KSPField] public double sampleCapacity = -1;           // drive capacity, in Mb. -1 = unlimited
 		[KSPField] public string experiment_id = string.Empty;  // if set, restricts write access to the experiment on the same part, with the given experiment_id.
 
-		[KSPField(isPersistant = true)] public uint hdId = 0;
+		[KSPField(isPersistant = true)]
+		private bool isPrivate = false; 
 
-		[KSPField(guiActive = true, guiName = "Capacity", guiActiveEditor = true)] public string Capacity;
+		[KSPField(guiActive = false, guiActiveEditor = true, guiName = "Data storage")]
+		public string capacity = string.Empty;
 
 		private Drive drive;
-		private double totalSampleMass;
+		private float moduleMass;
 
 		public override void OnStart(StartState state)
 		{
 			// don't break tutorial scenarios
-			if (Lib.DisableScenario(this)) return;
-
-			if (hdId == 0) hdId = part.flightID;
-
-			if(drive == null)
-			{
-				if (!Lib.IsFlight())
-					drive = new Drive(title, dataCapacity, sampleCapacity);
-				else
-					drive = DB.Drive(hdId, title, dataCapacity, sampleCapacity);
-			}
-
-			if(vessel != null) Cache.RemoveVesselObjectsCache(vessel, "drives");
-
-			drive.is_private |= experiment_id.Length > 0;
-			UpdateCapacity();
-		}
-
-		public override void OnLoad(ConfigNode node)
-		{
-			base.OnLoad(node);
-
-			if (HighLogic.LoadedScene == GameScenes.LOADING)
-			{
-				drive = new Drive();
+			if (Lib.DisableScenario(this))
 				return;
-			}
+
+			if (drive == null && Lib.IsFlight())
+				drive = DB.Drive(part.flightID, part.partInfo.title, dataCapacity > 0 ? Lib.MBToBit(dataCapacity) : -1, sampleCapacity > 0 ? Lib.MBToBit(sampleCapacity) : -1, isPrivate);
+
+			moduleMass = GetMass();
+
+			// What is this for ? Mid flight part adding mods (KIS...) compatibility maybe ?
+			if (vessel != null) Cache.RemoveVesselObjectsCache(vessel, "drives"); 
 		}
 
-		public void SetDrive(Drive drive)
+		/// <summary> this is called by the pseudo-ctor DataProcess.GetProcessOnPartModuleLoad </summary>
+		public void SetPrivate(bool isPrivate)
 		{
-			this.drive = drive;
-			drive.is_private |= experiment_id.Length > 0;
-			UpdateCapacity();
+			this.isPrivate = isPrivate;
+			if (drive != null) drive.isPrivate = isPrivate;
 		}
 
 		public void FixedUpdate()
 		{
-			UpdateCapacity();
+			moduleMass = GetMass();
 		}
 
 		public void Update()
@@ -70,67 +56,75 @@ namespace KERBALISM
 			if (Lib.IsFlight())
 			{
 				// show DATA UI button, with size info
-				Events["ToggleUI"].guiName = Lib.StatusToggle("Data", drive.Empty() ? "empty" : drive.Size());
-				Events["ToggleUI"].active = !IsPrivate();
+				Events["DataManager"].guiName = Lib.StatusToggle("Data manager", GetStorageInfo());
+				Events["DataManager"].active = true; // !IsPrivate();
+
+				bool activeVesselIsEVA =
+					FlightGlobals.ActiveVessel != null
+					&& FlightGlobals.ActiveVessel.isEVA
+					&& !EVA.IsDead(FlightGlobals.ActiveVessel);
 
 				// show TakeData eva action button, if there is something to take
-				Events["TakeData"].active = !drive.Empty();
+				Events["EVATakeData"].active = activeVesselIsEVA && drive.Empty();
 
-				// show StoreData eva action button, if active vessel is an eva kerbal and there is something to store from it
-				Vessel v = FlightGlobals.ActiveVessel;
-				Events["StoreData"].active = !IsPrivate() && v != null && v.isEVA && !EVA.IsDead(v);
+				// show StoreData eva action button, if the drive isn't private
+				Events["EVAStoreData"].active = activeVesselIsEVA && !IsPrivate();
 
-				// hide TransferLocation button
-				var transferVisible = !IsPrivate();
-				if(transferVisible)
-				{
-					transferVisible = Drive.GetDrives(vessel, true).Count > 1;
-				}
+				// don't show transfer button for private drives and if there is only one drive
+				bool transferVisible = !IsPrivate() && Drive.GetDrives(vessel).Count > 1;
 				Events["TransferData"].active = transferVisible;
 				Events["TransferData"].guiActive = transferVisible;
+			}
+			else
+			{
+				capacity = GetStorageInfo();
 			}
 		}
 
 		public bool IsPrivate()
 		{
-			return drive.is_private;
+			return drive.isPrivate;
 		}
 
-		private void UpdateCapacity()
+		private float GetMass()
 		{
-			double mass = 0;
-			foreach (var sample in drive.samples.Values) mass += sample.mass;
-			totalSampleMass = mass;
+			if (drive != null) return (float)drive.GetMass();
+			else return 0f;
+		}
 
-			if (dataCapacity < 0 || sampleCapacity < 0 || IsPrivate())
+		public string GetStorageInfo()
+		{
+			// drive is only available in flight
+			if (drive != null)
+				return drive.GetStorageInfo();
+
+			StringBuilder sb = new StringBuilder();
+
+			if (dataCapacity != 0)
 			{
-				Fields["Capacity"].guiActive = false;
-				Fields["Capacity"].guiActiveEditor = false;
-				return;
+				sb.Append("files : ");
+				if (dataCapacity > 0)
+					sb.Append(Lib.HumanReadableDataSize(dataCapacity));
+				else if (dataCapacity == -1)
+					sb.Append("unlimited");
 			}
 
-			double availableDataCapacity = dataCapacity;
-			int availableSlots = sampleCapacity;
-
-			if (Lib.IsFlight())
+			if (sampleCapacity != 0)
 			{
-				availableDataCapacity = drive.FileCapacityAvailable();
-				availableSlots = Lib.SampleSizeToSlots(drive.SampleCapacityAvailable());
+				if (dataCapacity != 0)
+					sb.Append(", ");
+
+				sb.Append("samples : ");
+				if (sampleCapacity > 0)
+				{
+					sb.Append(sampleCapacity);
+					sb.Append(" slot");
+				}
+				else if (sampleCapacity == -1)
+					sb.Append("unlimited");
 			}
 
-			Capacity = string.Empty;
-			if(availableDataCapacity > double.Epsilon)
-				Capacity = Lib.HumanReadableDataSize(availableDataCapacity);
-			if(availableSlots > 0)
-			{
-				if (Capacity.Length > 0) Capacity += " ";
-				Capacity += Lib.HumanReadableSampleSize(availableSlots);
-			}
-
-			if(Lib.IsFlight() && totalSampleMass > double.Epsilon)
-			{
-				Capacity += " " + Lib.HumanReadableMass(totalSampleMass);
-			}
+			return sb.ToString();
 		}
 
 		public Drive GetDrive()
@@ -139,59 +133,67 @@ namespace KERBALISM
 		}
 
 		[KSPEvent(guiActive = true, guiName = "_", active = true)]
-		public void ToggleUI()
+		public void DataManager()
 		{
 			UI.Open((Panel p) => p.Fileman(vessel));
 		}
 
-
+		// TODO : for the 3 transfer events, in the button label, add the size of the data to be transferred and the available space in the destination 
 		[KSPEvent(guiName = "#KERBALISM_HardDrive_TransferData", active = false)]
 		public void TransferData()
 		{
-			var hardDrives = vessel.FindPartModulesImplementing<HardDrive>();
-			foreach(var hardDrive in hardDrives)
-			{
-				if (hardDrive == this) continue;
-				hardDrive.drive.Move(drive, PreferencesScience.Instance.sampleTransfer || Lib.CrewCount(vessel) > 0);
-			}
+			// transfer results from the whole vessel
+			Drive.GetAllResultsToTransfer(vessel).ForEach(result => drive.Add(result));
 		}
 
+
+		// Note on EVA / limited capacity : there is no way to abort a boarding event once it has been initiated
+		// Boarding can be disabled by setting HighLogic.CurrentGame.Parameters.Flight.CanBoard to false, but that doesn't help
+		// What we can do instead is to get the protected "KerbalEVA.currentAirlockPart" property on the EVA partmodule,
+		// when it's not null, that mean that the "[press B to board]" indication is shown and the player can board
+		// What we can do is that while not null, if data capacity isn't enough, post a warning message at regular interval
 
 		[KSPEvent(guiActive = false, guiActiveUnfocused = true, guiActiveUncommand = true, guiName = "#KERBALISM_HardDrive_TakeData", active = true)]
-		public void TakeData()
+		public void EVATakeData()
 		{
 			// disable for dead eva kerbals
-			Vessel v = FlightGlobals.ActiveVessel;
-			if (v == null || EVA.IsDead(v)) return;
+			Vessel evaVessel = FlightGlobals.ActiveVessel;
+			if (evaVessel == null || EVA.IsDead(evaVessel)) return;
 
-			// transfer data
-			if(!Drive.Transfer(drive, v, PreferencesScience.Instance.sampleTransfer || Lib.CrewCount(v) > 0))
-			{
-				Message.Post
-				(
-					Lib.Color("red", Lib.BuildString("WARNING: not evering copied"), true),
-					Lib.BuildString("Storage is at capacity")
-				);
-			}
+			// get the EVA kerbal drive
+			Drive evaDrive = Drive.GetDrives(evaVessel).FirstOrDefault();
+			if (evaDrive == null) return;
+
+			// transfer results from this drive
+			drive.GetResultsToTransfer(vessel).ForEach(result => evaDrive.Add(result));
+
+
+			//Message.Post
+			//	(
+			//		Lib.Color("red", Lib.BuildString("WARNING: not evering copied"), true),
+			//		Lib.BuildString("Storage is at capacity")
+			//	);
 		}
 
-
 		[KSPEvent(guiActive = false, guiActiveUnfocused = true, guiActiveUncommand = true, guiName = "#KERBALISM_HardDrive_TransferData", active = true)]
-		public void StoreData()
+		public void EVAStoreData()
 		{
 			// disable for dead eva kerbals
-			Vessel v = FlightGlobals.ActiveVessel;
-			if (v == null || EVA.IsDead(v)) return;
+			Vessel evaVessel = FlightGlobals.ActiveVessel;
+			if (evaVessel == null || EVA.IsDead(evaVessel)) return;
 
-			// transfer data
-			if(!Drive.Transfer(v, drive, PreferencesScience.Instance.sampleTransfer || Lib.CrewCount(v) > 0))
-			{
-				Message.Post
-				(
-					Lib.Color("red", Lib.BuildString("WARNING: not evering copied"), true),
-					Lib.BuildString("Storage is at capacity")
-				);
-			}
+			// get the EVA kerbal drive
+			Drive evaDrive = Drive.GetDrives(evaVessel).FirstOrDefault();
+			if (evaDrive == null) return;
+
+			// transfer results to this drive
+			evaDrive.GetResultsToTransfer(vessel).ForEach(result => drive.Add(result));
+
+			//Message.Post
+			//(
+			//	Lib.Color("red", Lib.BuildString("WARNING: not evering copied"), true),
+			//	Lib.BuildString("Storage is at capacity")
+			//);
 		}
 
 
@@ -201,58 +203,89 @@ namespace KERBALISM
 			return Specs().Info();
 		}
 
+		#region IScienceDataContainer implementation (stock interface)
 
-		// science container implementation
+		// Note on this : currently, in a stock game, the interface will never be used.
+		// It's purpose is to allow compatibility with mods that use the stock experiment module.
+		// While it should technically work, mods implementing custom modules that try
+		// to manipulate to stock science data will probably have issues.
+
 		public ScienceData[] GetData()
 		{
 			// generate and return stock science data
 			List<ScienceData> data = new List<ScienceData>();
-			foreach (var pair in drive.files)
+			for (int i = 0; i < drive.Count; i++)
 			{
-				File file = pair.Value;
-				var exp = Science.Experiment(pair.Key);
-				data.Add(new ScienceData((float)file.size, 1.0f, 1.0f, pair.Key, exp.FullName(pair.Key)));
-			}
-			foreach (var pair in drive.samples)
-			{
-				Sample sample = pair.Value;
-				var exp = Science.Experiment(pair.Key);
-				data.Add(new ScienceData((float)sample.size, 0.0f, 0.0f, pair.Key, exp.FullName(pair.Key)));
+				float xmitScalar = drive[i].type == FileType.File ? 1f : 0f;
+				data.Add(new ScienceData((float)Lib.BitToMB(drive[i].Size), xmitScalar, xmitScalar, drive[i].subjectId, drive[i].Title));
 			}
 			return data.ToArray();
 		}
 
-		// TODO do something about limited capacity...
-		// EVAs returning should get a warning if needed
 		public void ReturnData(ScienceData data)
 		{
-			// store the data
-			bool result = false;
-			if (data.baseTransmitValue > float.Epsilon || data.transmitBonus > double.Epsilon)
-			{
-				result = drive.Record_file(data.subjectID, data.dataAmount);
-			}
-			else
-			{
-				var experimentInfo = Science.Experiment(data.subjectID);
-				var sampleMass = Science.GetSampleMass(data.subjectID);
-				var mass = sampleMass / experimentInfo.max_amount * data.dataAmount;
+			FileType type = data.baseTransmitValue > 0 || data.transmitBonus > 0 ? FileType.File : FileType.Sample;
+			long dataSize = Lib.MBToBit(data.dataAmount);
 
-				result = drive.Record_sample(data.subjectID, data.dataAmount, mass);
+			// complete partial results
+			foreach (Result result in Drive.FindPartialResults(vessel, data.subjectID, type, 0, out long totalData))
+			{
+				dataSize -= result.AddData(dataSize);
+				if (dataSize <= 0) return;
+			}
+
+			ExperimentInfo expInfo = Science.GetExperimentInfoFromSubject(data.subjectID);
+
+			while (dataSize > 0)
+			{
+				Drive drive = Drive.GetDriveBestCapacity(vessel, type);
+				if (drive == null)
+				{
+					string sizeStr;
+
+					if (type == FileType.File)
+					{
+						sizeStr = Lib.HumanReadableDataSize(dataSize);
+					}
+					else
+					{
+						if (expInfo != null)
+							sizeStr = Lib.HumanReadableSampleSlotAndMass(dataSize, expInfo.massPerBit);
+						else
+							sizeStr = Lib.HumanReadableSampleSlots(dataSize);
+					}
+
+					Message.Post(Severity.warning, Lib.BuildString(
+						"Not enough space available to store '",
+						data.title,
+						"', ",
+						sizeStr,
+						" were lost."));
+					return;
+				}
+				else
+				{
+					long dataAdded = Math.Min(drive.CapacityAvailable(type), dataSize);
+					dataSize -= dataAdded;
+					new Result(drive, type, data.subjectID, dataAdded);
+				}
 			}
 		}
 
+		// we don't want anything from stock or other mods to be able to delete our data ?
 		public void DumpData(ScienceData data)
 		{
+
+
 			// remove the data
-			if (data.baseTransmitValue > float.Epsilon || data.transmitBonus > double.Epsilon)
-			{
-				drive.Delete_file(data.subjectID, data.dataAmount, null);
-			}
-			else
-			{
-				drive.Delete_sample(data.subjectID, data.dataAmount);
-			}
+			//if (data.baseTransmitValue > float.Epsilon || data.transmitBonus > double.Epsilon)
+			//{
+			//	drive.Delete_file(data.subjectID, data.dataAmount);
+			//}
+			//else
+			//{
+			//	drive.Delete_sample(data.subjectID, data.dataAmount);
+			//}
 		}
 
 		public void ReviewData()
@@ -286,25 +319,25 @@ namespace KERBALISM
 			return false;
 		}
 
-		//public override string GetModuleDisplayName() { return "Hard Drive"; }
+		#endregion
 
 		// specifics support
 		public Specifics Specs()
 		{
 			Specifics specs = new Specifics();
 			specs.Add("File capacity", dataCapacity >= 0 ? Lib.HumanReadableDataSize(dataCapacity) : "unlimited");
-			specs.Add("Sample capacity", sampleCapacity >= 0 ? Lib.HumanReadableSampleSize(sampleCapacity) : "unlimited");
+			specs.Add("Sample capacity", sampleCapacity >= 0 ? sampleCapacity.ToString("F1") : "unlimited");
 			return specs;
 		}
 
 		// module info support
-		public string GetModuleTitle() { return "Hard Drive"; }
-		public override string GetModuleDisplayName() { return "Hard Drive"; }
+		public string GetModuleTitle() { return "Data storage"; }
+		public override string GetModuleDisplayName() { return "Data storage"; }
 		public string GetPrimaryField() { return string.Empty; }
 		public Callback<Rect> GetDrawModulePanelCallback() { return null; }
 
 		// module mass support
-		public float GetModuleMass(float defaultMass, ModifierStagingSituation sit) { return (float)totalSampleMass; }
+		public float GetModuleMass(float defaultMass, ModifierStagingSituation sit) { return moduleMass; }
 		public ModifierChangeWhen GetModuleMassChangeWhen() { return ModifierChangeWhen.CONSTANTLY; }
 	}
 

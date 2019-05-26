@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using KSP.UI.Screens;
 using KSP.UI.Screens.SpaceCenter.MissionSummaryDialog;
 using UnityEngine;
@@ -19,13 +20,13 @@ namespace KERBALISM
 			GameEvents.onVesselRecoveryProcessing.Add(this.VesselRecoveryProcessing);
 			GameEvents.onVesselRecovered.Add(this.VesselRecovered);
 			GameEvents.onVesselTerminated.Add(this.VesselTerminated);
-			GameEvents.onVesselWillDestroy.Add(this.VesselDestroyed);
+			GameEvents.onVesselWillDestroy.Add(this.OnVesselWillDestroy);
 			GameEvents.onPartCouple.Add(this.VesselDock);
 
 			GameEvents.onVesselChange.Add((v) => { Cache.PurgeObjects(v); });
 			GameEvents.onVesselStandardModification.Add((v) => { Cache.PurgeObjects(v); });
 
-			GameEvents.onPartDie.Add(this.PartDestroyed);
+			GameEvents.onPartDie.Add(this.PartDie);
 			GameEvents.OnTechnologyResearched.Add(this.TechResearched);
 			GameEvents.onGUIEditorToolbarReady.Add(this.AddEditorCategory);
 
@@ -146,12 +147,13 @@ namespace KERBALISM
 			}
 
 			// merge drives data
-			Drive.Transfer(data.from.vessel, data.to.vessel, true);
+			Drive.TransferResultsToVessel(Drive.GetResults(data.from.vessel), data.to.vessel);
+			// TODO : delete the EVA drive from the DB
+			// Drive.Purge(data.from.vessel);
 
 			// forget vessel data
 			DB.vessels.Remove(Lib.VesselID(data.from.vessel));
-			Drive.Purge(data.from.vessel);
-
+			
 			Cache.PurgeObjects(data.from.vessel);
 			Cache.PurgeObjects(data.to.vessel);
 
@@ -177,67 +179,26 @@ namespace KERBALISM
 
 			foreach (Drive drive in Drive.GetDrives(v))
 			{
-				// for each file in the drive
-				foreach (KeyValuePair<string, File> p in drive.files)
+				foreach (Result result in drive)
 				{
-					// shortcuts
-					string filename = p.Key;
-					File file = p.Value;
-
-					// de-buffer partially transmitted data
-					file.size += file.buff;
-					file.buff = 0.0;
-
-					// get subject
-					ScienceSubject subject = ResearchAndDevelopment.GetSubjectByID(filename);
-
-					// credit science
-					float credits = Science.Credit(filename, file.size, false, v);
+					float size = (float)Lib.BitToMB(result.SizeWithBuffer);
+					float credits = Science.Credit(result, v, false);
+					ScienceSubject subject = ResearchAndDevelopment.GetSubjectByID(result.subjectId);
 
 					// create science widged
 					ScienceSubjectWidget widged = ScienceSubjectWidget.Create
 					(
-					  subject,            // subject
-					  (float)file.size,   // data gathered
-					  credits,            // science points
-					  dialog              // recovery dialog
+					  subject,          // subject
+					  size,				// data gathered
+					  credits,          // science points
+					  dialog            // recovery dialog
 					);
 
 					// add widget to dialog
 					dialog.AddDataWidget(widged);
 
 					// add science credits to total
-					dialog.scienceEarned += (float)credits;
-				}
-
-				// for each sample in the drive
-				// for each file in the drive
-				foreach (KeyValuePair<string, Sample> p in drive.samples)
-				{
-					// shortcuts
-					string filename = p.Key;
-					Sample sample = p.Value;
-
-					// get subject
-					ScienceSubject subject = ResearchAndDevelopment.GetSubjectByID(filename);
-
-					// credit science
-					float credits = Science.Credit(filename, sample.size, false, v);
-
-					// create science widged
-					ScienceSubjectWidget widged = ScienceSubjectWidget.Create
-					(
-					  subject,            // subject
-					  (float)sample.size, // data gathered
-					  credits,            // science points
-					  dialog              // recovery dialog
-					);
-
-					// add widget to dialog
-					dialog.AddDataWidget(widged);
-
-					// add science credits to total
-					dialog.scienceEarned += (float)credits;
+					dialog.scienceEarned += credits;
 				}
 			}
 		}
@@ -269,7 +230,7 @@ namespace KERBALISM
 
 			// purge the caches
 			ResourceCache.Purge(pv);
-			Drive.Purge(pv);
+			//Drive.Purge(pv);
 			Cache.PurgeObjects(pv);
 		}
 
@@ -284,12 +245,12 @@ namespace KERBALISM
 
 			// purge the caches
 			ResourceCache.Purge(pv);
-			Drive.Purge(pv);
+			//Drive.Purge(pv);
 			Cache.PurgeObjects(pv);
 		}
 
 
-		void VesselDestroyed(Vessel v)
+		void OnVesselWillDestroy(Vessel v)
 		{
 			DB.vessels.Remove(Lib.VesselID(v));
 
@@ -314,11 +275,29 @@ namespace KERBALISM
 				DB.KillKerbal(n, false);
 			}
 
-
 			// purge the caches
 			ResourceCache.Purge(v);
-			Drive.Purge(v);
+			//Drive.Purge(v);
 			Cache.PurgeObjects(v);
+
+			// TODO : DB synchronization
+
+			//if (v.loaded)
+			//{
+			//	if (FlightGlobals.ActiveVessel != v)
+			//	{
+			//		foreach (Part part in v.parts)
+			//		{
+			//			PartRemovedFromGame(part.flightID);
+			//		}
+			//	}
+			//}
+			//else
+			//{
+
+			//}
+
+
 		}
 
 		void VesselDock(GameEvents.FromToAction<Part, Part> e)
@@ -343,7 +322,7 @@ namespace KERBALISM
 			Cache.PurgeObjects();
 		}
 
-		void PartDestroyed(Part p)
+		void PartDie(Part p)
 		{
 			// do nothing in the editor
 			if (Lib.IsEditor())
@@ -354,19 +333,33 @@ namespace KERBALISM
 				return;
 
 			Cache.PurgeObjects(p.vessel);
-
-			if(DB.drives.ContainsKey(p.flightID))
-			{
-				foreach(var pair in DB.drives[p.flightID].files)
-				{
-					if(pair.Value.buff > double.Epsilon)
-					{
-						Science.Credit(pair.Key, pair.Value.buff, true, p.vessel.protoVessel);
-					}
-				}
-			}
+			if (DB.drives.ContainsKey(p.flightID)) Science.ClearFlightSubjectData(DB.drives[p.flightID]);
 			DB.drives.Remove(p.flightID);
+
+			//TODO : use this to handle DB synchronization
+			//PartRemovedFromGame(p.flightID);
+
 		}
+
+		//void PartRemovedFromGame(uint partID)
+		//{
+
+		//	EventData<Vessel> onFlightGlobalsRemoveVessel =
+		//		(EventData<Vessel>)
+		//		typeof(GameEvents)
+		//		.GetField("onFlightGlobalsRemoveVessel", BindingFlags.NonPublic | BindingFlags.Static)
+		//		.GetValue(null);
+
+		//	onFlightGlobalsRemoveVessel.Add(OnFlightGlobalsRemoveVessel())
+
+
+
+		//	Lib.ReflectionValue<EventData<Vessel>>()
+
+
+
+		//	GameEvents.onFlightGlobalsRemoveVessel.Add()
+		//}
 
 		void AddEditorCategory()
 		{

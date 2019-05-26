@@ -354,6 +354,7 @@ namespace KERBALISM
 				}
 
 				// type-specific hacks
+				// TODO : we will need to get the ExperimentProcess "manually" here
 				switch (reliability.type)
 				{
 					case "ProcessController":
@@ -501,15 +502,16 @@ namespace KERBALISM
 					}
 					break;
 
-				case "Experiment":
-					if (b)
-					{
-						foreach (PartModule m in modules)
-						{
-							(m as Experiment).ReliablityEvent(b);
-						}
-					}
-					break;
+					// TODO : Dataprocess reliability
+				//case "Experiment":
+				//	if (b)
+				//	{
+				//		foreach (PartModule m in modules)
+				//		{
+				//			(m as Experiment).ReliablityEvent(b);
+				//		}
+				//	}
+				//	break;
 			}
 
 			API.Failure.Notify(part, type, b);

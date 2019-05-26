@@ -90,7 +90,8 @@ namespace KERBALISM
 				tooltip = tooltip,
 				click = click,
 				hover = hover,
-				icons = new List<Icon>()
+				icons = new List<Icon>(),
+				leftIcons = new List<Icon>()
 			};
 			if (sections.Count > 0) {
 				Section section = sections[sections.Count - 1];
@@ -99,8 +100,8 @@ namespace KERBALISM
 			}
 		}
 
-		///<summary> Adds an icon to the last added header </summary>
-		public void AddIcon(Texture2D texture, string tooltip = "", Action click = null)
+		///<summary> Adds an icon to the last added entry</summary>
+		public void AddIcon(Texture2D texture, string tooltip = "", Action click = null, bool left = false)
 		{
 			Icon i = new Icon
 			{
@@ -111,7 +112,10 @@ namespace KERBALISM
 			if (sections.Count > 0)
 			{
 				Section p = sections[sections.Count - 1];
-				p.entries[p.entries.Count - 1].icons.Add(i);
+				if (left)
+					p.entries[p.entries.Count - 1].leftIcons.Add(i);
+				else
+					p.entries[p.entries.Count - 1].icons.Add(i);
 			}
 			else if (headers.Count > 0)
 			{
@@ -177,6 +181,11 @@ namespace KERBALISM
 				foreach (Entry e in p.entries)
 				{
 					GUILayout.BeginHorizontal(Styles.entry_container);
+					foreach (Icon i in e.leftIcons)
+					{
+						GUILayout.Label(new GUIContent(i.texture, i.tooltip), Styles.left_icon);
+						if (i.click != null && Lib.IsClicked()) callbacks.Add(i.click);
+					}
 					GUILayout.Label(new GUIContent(e.label, e.tooltip), Styles.entry_label, GUILayout.Height(Styles.entry_label.fontSize));
 					if (e.hover != null && Lib.IsHover()) callbacks.Add(e.hover);
 					GUILayout.Label(new GUIContent(e.value, e.tooltip), Styles.entry_value, GUILayout.Height(Styles.entry_value.fontSize));
@@ -307,6 +316,7 @@ namespace KERBALISM
 			public Action click;
 			public Action hover;
 			public List<Icon> icons;
+			public List<Icon> leftIcons;
 		}
 
 		sealed class Icon

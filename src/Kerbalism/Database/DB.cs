@@ -9,6 +9,10 @@ namespace KERBALISM
 
 	public static class DB
 	{
+
+
+
+
 		public static void Load(ConfigNode node)
 		{
 			// get version (or use current one for new savegames)
@@ -49,7 +53,8 @@ namespace KERBALISM
 			{
 				foreach (var drive_node in node.GetNode("drives").GetNodes())
 				{
-					drives.Add(Lib.Parse.ToUInt(drive_node.name), new Drive(drive_node));
+					uint partId = Lib.Parse.ToUInt(drive_node.name);
+					drives.Add(partId, new Drive(drive_node, version, partId));
 				}
 			}
 
@@ -60,6 +65,18 @@ namespace KERBALISM
 				foreach (var body_node in node.GetNode("bodies").GetNodes())
 				{
 					bodies.Add(From_safe_key(body_node.name), new BodyData(body_node));
+				}
+			}
+
+			// load dataprocesses
+			processes = new Dictionary<uint, List<DataProcess>>();
+			if (node.HasNode("processes"))
+			{
+				foreach (var process_node in node.GetNode("processes").GetNodes())
+				{
+					DataProcess process = DataProcess.Load(process_node);
+					if (process == null) continue;
+					AddDataProcess(Lib.Parse.ToUInt(process_node.name), process);
 				}
 			}
 
@@ -123,6 +140,16 @@ namespace KERBALISM
 				p.Value.Save(bodies_node.AddNode(To_safe_key(p.Key)));
 			}
 
+			// save processes
+			var processes_node = node.AddNode("processes");
+			foreach (var p in processes)
+			{
+				for (int i = 0; i < p.Value.Count; i++)
+				{
+					p.Value[i].Save(drives_node.AddNode(p.Key.ToString()));
+				}
+			}
+
 			// save landmark data
 			landmarks.Save(node.AddNode("landmarks"));
 
@@ -143,20 +170,19 @@ namespace KERBALISM
 
 		public static VesselData Vessel(Vessel v)
 		{
-			Guid id = Lib.VesselID(v);
-			if (!vessels.ContainsKey(id))
+			if (!vessels.ContainsKey(Lib.VesselID(v)))
 			{
-				vessels.Add(id, new VesselData());
+				vessels.Add(Lib.VesselID(v), new VesselData());
 			}
-			return vessels[id];
+			return vessels[Lib.VesselID(v)];
 		}
 
 
-		public static Drive Drive(uint partId, string title = "Brick", double dataCapacity = -1, int sampleCapacity = -1)
+		public static Drive Drive(uint partId, string partTitle, long fileCapacity, long sampleCapacity, bool isPrivate)
 		{
 			if(!drives.ContainsKey(partId))
 			{
-				var d = new Drive(title, dataCapacity, sampleCapacity);
+				var d = new Drive(partId, partTitle, fileCapacity, sampleCapacity, isPrivate);
 				drives.Add(partId, d);
 			}
 			return drives[partId];
@@ -169,6 +195,68 @@ namespace KERBALISM
 				bodies.Add(name, new BodyData());
 			}
 			return bodies[name];
+		}
+
+		public static DataProcess GetDataProcess(uint partId, string processId)
+		{
+			if (processes.ContainsKey(partId))
+			{
+				for (int i = 0; i < processes[partId].Count; i++)
+				{
+					if (processes[partId][i].processId == processId) return processes[partId][i];
+				}
+			}
+			return null;
+		}
+
+		public static bool AddDataProcess(uint partId, DataProcess process)
+		{
+			if (processes.ContainsKey(partId))
+			{
+				for (int i = 0; i < processes[partId].Count; i++)
+				{
+					if (processes[partId][i].processId == process.processId)
+					{
+						Lib.Log("WARNING : trying to create a duplicate of dataProcess '" + process.processId + "'. " +
+							"Duplicate science PartModules are not allowed !");
+						return false;
+					}
+				}
+				processes[partId].Add(process);
+			}
+			processes.Add(partId, new List<DataProcess> { process });
+			return true;
+		}
+
+		public static bool RemoveDataProcess(uint partId, DataProcess process)
+		{
+			if (processes.ContainsKey(partId))
+			{
+				for (int i = 0; i < processes[partId].Count; i++)
+				{
+					if (processes[partId][i].processId == process.processId)
+					{
+						processes[partId].RemoveAt(i);
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
+		// Note : because DB.subjects must only contain >valid< subjects and because
+		// subject_id is not known when a new subject is created, this doesn't do the subject creation
+		/// <summary>
+		/// return an existing subject, or null if it doesn't exist yet.
+		/// For creating a new subject, use the Subject.GetOrCreate() method
+		/// </summary>
+		public static Subject GetSubject(string subject_id)
+		{
+			if (subjects.ContainsKey(subject_id))
+			{
+				return subjects[subject_id];
+			}
+			return null;
 		}
 
 		public static Boolean ContainsKerbal(string name)
@@ -217,7 +305,9 @@ namespace KERBALISM
 		public static int uid;                                 // savegame unique id
 		private static Dictionary<string, KerbalData> kerbals; // store data per-kerbal
 		public static Dictionary<Guid, VesselData> vessels;    // store data per-vessel, indexed by root part id
-		public static Dictionary<uint, Drive> drives;		   // all drives, of all vessels
+		public static Dictionary<uint, Drive> drives;         // all drives, of all vessels, indexed by part id
+		public static Dictionary<uint, List<DataProcess>> processes; // all science processes, of all vessels, indexed by part id, as a list (multiple processes per part)
+		public static Dictionary<string, Subject> subjects;     // store science/experiment subjects. 
 		public static Dictionary<string, BodyData> bodies;     // store data per-body
 		public static LandmarkData landmarks;                  // store landmark data
 		public static UIData ui;                               // store ui data

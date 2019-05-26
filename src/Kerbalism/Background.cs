@@ -40,12 +40,10 @@ namespace KERBALISM
 			switch (module_name)
 			{
 				case "Reliability": return Module_type.Reliability;
-				case "Experiment": return Module_type.Experiment;
 				case "Greenhouse": return Module_type.Greenhouse;
 				case "GravityRing": return Module_type.GravityRing;
 				case "Harvester": return Module_type.Harvester;
 				case "Emitter": return Module_type.Emitter;
-				case "Laboratory": return Module_type.Laboratory;
 				case "ModuleCommand": return Module_type.Command;
 				case "ModuleDeployableSolarPanel": return Module_type.Panel;
 				case "ModuleGenerator": return Module_type.Generator;
@@ -60,7 +58,6 @@ namespace KERBALISM
 				case "ModuleLight":
 				case "ModuleColoredLensLight":
 				case "ModuleMultiPointSurfaceLight": return Module_type.Light;
-				case "KerbalismScansat": return Module_type.Scanner;
 				case "ModuleCurvedSolarPanel": return Module_type.CurvedPanel;
 				case "FissionGenerator": return Module_type.FissionGenerator;
 				case "ModuleRadioisotopeGenerator": return Module_type.RadioisotopeGenerator;
@@ -97,12 +94,10 @@ namespace KERBALISM
 				switch(e.type)
 				{
 					case Module_type.Reliability: Reliability.BackgroundUpdate(v, e.p, e.m, e.module_prefab as Reliability); break;
-					case Module_type.Experiment: Experiment.BackgroundUpdate(v, e.m, e.module_prefab as Experiment, ec, resources, elapsed_s); break;
 					case Module_type.Greenhouse: Greenhouse.BackgroundUpdate(v, e.m, e.module_prefab as Greenhouse, vi, resources, elapsed_s); break;
 					case Module_type.GravityRing: GravityRing.BackgroundUpdate(v, e.p, e.m, e.module_prefab as GravityRing, ec, elapsed_s); break;
 					case Module_type.Emitter: Emitter.BackgroundUpdate(v, e.p, e.m, e.module_prefab as Emitter, ec, elapsed_s); break;
 					case Module_type.Harvester: Harvester.BackgroundUpdate(v, e.m, e.module_prefab as Harvester, elapsed_s); break; // Kerbalism ground and air harvester module
-					case Module_type.Laboratory: Laboratory.BackgroundUpdate(v, e.p, e.m, e.module_prefab as Laboratory, ec, elapsed_s); break;
 					case Module_type.Command: ProcessCommand(v, e.p, e.m, e.module_prefab as ModuleCommand, resources, elapsed_s); break;
 					case Module_type.Panel: ProcessPanel(v, e.p, e.m, e.module_prefab as ModuleDeployableSolarPanel, vi, ec, elapsed_s); break;
 					case Module_type.Generator: ProcessGenerator(v, e.p, e.m, e.module_prefab as ModuleGenerator, resources, elapsed_s); break;
@@ -111,7 +106,6 @@ namespace KERBALISM
 					case Module_type.AsteroidDrill: ProcessAsteroidDrill(v, e.p, e.m, e.module_prefab as ModuleAsteroidDrill, resources, elapsed_s); break; // Stock asteroid harvester module
 					case Module_type.StockLab: ProcessStockLab(v, e.p, e.m, e.module_prefab as ModuleScienceConverter, ec, elapsed_s); break;
 					case Module_type.Light: ProcessLight(v, e.p, e.m, e.module_prefab as ModuleLight, ec, elapsed_s); break;
-					case Module_type.Scanner: KerbalismScansat.BackgroundUpdate(v, e.p, e.m, e.module_prefab as KerbalismScansat, e.part_prefab, vd, ec, elapsed_s); break;
 					case Module_type.CurvedPanel: ProcessCurvedPanel(v, e.p, e.m, e.module_prefab, e.part_prefab, vi, ec, elapsed_s); break;
 					case Module_type.FissionGenerator: ProcessFissionGenerator(v, e.p, e.m, e.module_prefab, ec, elapsed_s); break;
 					case Module_type.RadioisotopeGenerator: ProcessRadioisotopeGenerator(v, e.p, e.m, e.module_prefab, ec, elapsed_s); break;

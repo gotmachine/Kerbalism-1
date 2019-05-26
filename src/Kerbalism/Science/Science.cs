@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
@@ -11,11 +12,32 @@ namespace KERBALISM
 	{
 		// this controls how fast science is credited while it is being transmitted.
 		// try to be conservative here, because crediting introduces a lag
-		private const double buffer_science_value = 0.4; // min. 0.01 value
-		private const double min_buffer_size = 0.01; // min. 10kB
+		public const double buffer_science_value = 0.4; // min. 0.01 value
+		public const long min_buffer_size = 81920; // min. 10kB
+		public const long max_file_size = 9007199254740992; // max 1 PT (1024 TB)
 
 		// this is for auto-transmit throttling
 		public const double min_file_size = 0.002;
+
+		private static readonly List<PendingProcess> processes = new List<PendingProcess>();
+		private static readonly List<Result> results = new List<Result>();
+
+		private class PendingProcess
+		{
+			public DataProcess process;
+			public long dataPending;
+			public long dataProcessed;
+			public int convertingFromIndex;
+
+			public PendingProcess(DataProcess process, long dataPending)
+			{
+				this.process = process;
+				this.dataPending = dataPending;
+				dataProcessed = 0;
+				convertingFromIndex = -1;
+			}
+		}
+
 
 		// pseudo-ctor
 		public static void Init()
@@ -23,143 +45,392 @@ namespace KERBALISM
 			// make the science dialog invisible, just once
 			if (Features.Science)
 			{
-				GameObject prefab = AssetBase.GetPrefab("ScienceResultsDialog");
-				if (Settings.ScienceDialog)
+				// TODO : fix the Hijacker
+				//GameObject prefab = AssetBase.GetPrefab("ScienceResultsDialog");
+				//if (Settings.ScienceDialog)
+				//{
+				//	prefab.gameObject.AddOrGetComponent<Hijacker>();
+				//}
+				//else
+				//{
+				//	prefab.gameObject.AddOrGetComponent<MiniHijacker>();
+				//}
+
+				// load EXPERIMENT_INFO nodes
+				foreach (ConfigNode expNode in GameDatabase.Instance.GetConfigNodes("EXPERIMENT_INFO"))
 				{
-					prefab.gameObject.AddOrGetComponent<Hijacker>();
+					ExperimentInfo exp_info = new ExperimentInfo(expNode);
+					if (!exp_infos.ContainsKey(exp_info.id))
+					{
+						exp_infos.Add(exp_info.id, exp_info);
+
+						foreach (ConfigNode varNode in expNode.GetNodes("VARIANT"))
+						{
+							ExperimentVariant exp_variant = new ExperimentVariant(varNode, exp_info);
+							if (!exp_variants.ContainsKey(exp_variant.id))
+								exp_variants.Add(exp_variant.id, exp_variant);
+							else
+								Lib.Log("WARNING : Duplicate VARIANT '" + exp_variant.id + "' wasn't loaded");
+						}
+					}
+					else
+						Lib.Log("WARNING : Duplicate EXPERIMENT_INFO '" + exp_info.id + "' wasn't loaded");
 				}
-				else
+
+
+
+				// build the biomes cache
+				foreach (CelestialBody body in FlightGlobals.Bodies)
 				{
-					prefab.gameObject.AddOrGetComponent<MiniHijacker>();
+					if (body.BiomeMap != null)
+						biomes.Add(body, body.BiomeMap.Attributes.Select(y => y.name).ToArray());
+				}
+
+				// build the subject cache (megaloop !)
+				// and get the data already retrieved in RnD
+				foreach (ExperimentInfo exp_info in exp_infos.Values)
+				{
+					foreach (CelestialBody body in FlightGlobals.Bodies)
+					{
+						foreach (int sitInt in Enum.GetValues(typeof(KerbalismSituation)))
+						{
+							KerbalismSituation sit = (KerbalismSituation)sitInt;
+
+							if (sit == KerbalismSituation.None) continue;
+
+							if (exp_info.IsAvailable(sit, body))
+							{
+								if (!exp_info.BiomeIsRelevant(sit))
+								{
+									Subject subject = new Subject(exp_info, sit, body, string.Empty, true);
+									subject.dataStoredRnD += subject.DataStoredInRnD();
+									subjects.Add(subject.SubjectId, subject);
+								}
+								else
+								{
+									foreach (string biome in biomes[body])
+									{
+										Subject subject = new Subject(exp_info, sit, body, biome, true);
+										subject.dataStoredRnD += subject.DataStoredInRnD();
+										subjects.Add(subject.SubjectId, subject);
+									}
+
+									if (exp_info.allowMiniBiomes)
+									{
+										foreach (MiniBiome minibiome in body.MiniBiomes)
+										{
+											// TODO : Check that minibiome.GetTagKeyString is the right string
+											Subject subject = new Subject(exp_info, sit, body, minibiome.GetTagKeyString, true);
+											subject.dataStoredRnD += subject.DataStoredInRnD();
+											subjects.Add(subject.SubjectId, subject);
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+
+				// get the data stored in all drives from all vessels
+				foreach (Drive drive in DB.drives.Values)
+				{
+					foreach (Result result in drive)
+					{
+						subjects[result.subjectId].dataStoredFlight += result.SizeWithBuffer;
+					}
 				}
 			}
 		}
 
-		private static Drive FindDrive(Vessel v, string filename)
-		{
-			foreach (var d in Drive.GetDrives(v, true))
-			{
-				if (d.files.ContainsKey(filename))
-				{
-					return d;
-				}
-			}
-			return null;
-		}
 
-		// consume EC for transmission, and transmit science data
+		// Summary :
+		// - get transmit capacity
+		// - get all processes from the vessel
+		// - foreach process, check conditions by calling CanRun()
+		// - foreach valid process, get how much data can be generated by calling GetDataPending()
+		//		- doing non-converter first
+		//		- giving the value from non-converters to converters, so they can take it into account
+		// - foreach process, doing converters first, try to transmit, then to store the data
+		// - foreach process, call their Process() method, passing them how much data they did actually generate.
+		// - if there is some transmit_capapcity left, try to transmit all the others files lying around
+		// - trigger the science point crediting when the transmit buffers are full
+
 		public static void Update(Vessel v, Vessel_info vi, VesselData vd, Vessel_resources resources, double elapsed_s)
 		{
 			// do nothing if science system is disabled
 			if (!Features.Science) return;
 
-			// avoid corner-case when RnD isn't live during scene changes
-			// - this avoid losing science if the buffer reach threshold during a scene change
-			if (HighLogic.CurrentGame.Mode != Game.Modes.SANDBOX && ResearchAndDevelopment.Instance == null) return;
+			// get connection info and transmit capacity
+			long transmitLeft;
+			long transmitCapacity;
 
-			// get connection info
 			ConnectionInfo conn = vi.connection;
-			if (conn == null) return;
-			if (String.IsNullOrEmpty(vi.transmitting)) return;
+			if (conn == null
+				|| !conn.linked
+				|| ResourceCache.Info(v, "ElectricCharge").amount < double.Epsilon)
+				transmitCapacity = 0;
+			else
+				transmitCapacity = Lib.MBToBit(conn.rate * elapsed_s);
 
-			Drive warpCache = Cache.WarpCache(v);
-			bool isWarpCache = false;
+			transmitLeft = transmitCapacity;
 
-			double transmitSize = conn.rate * elapsed_s;
-			while(warpCache.files.Count > 0 || // transmit EVERYTHING in the cache, regardless of transmitSize.
-			      (transmitSize > double.Epsilon && !String.IsNullOrEmpty(vi.transmitting)))
+			processes.Clear();
+			results.Clear();
+
+			// get all results from all drives :
+			// - delete empty results
+			// - reset the transmit/process rates
+			// - build the list of results to be transmitted
+			foreach (Drive drive in Drive.GetDrives(v))
 			{
-				// get filename of data being downloaded
-				var exp_filename = vi.transmitting;
-				if (string.IsNullOrEmpty(exp_filename))
-					break;
-
-				Drive drive = null;
-				if (warpCache.files.ContainsKey(exp_filename)) {
-					drive = warpCache;
-					isWarpCache = true;
-				}
-				else
+				for (int i = drive.Count - 1; i >= 0; i--)
 				{
-					drive = FindDrive(v, exp_filename);
-					isWarpCache = false;
-				}
-
-				if (drive == null) break;
-
-				File file = drive.files[exp_filename];
-
-				if(isWarpCache) {
-					file.buff = file.size;
-					file.size = 0;
-					transmitSize -= file.size;
-				} else {
-					if (transmitSize < double.Epsilon)
-						break;
-
-					// determine how much data is transmitted
-					double transmitted = Math.Min(file.size, transmitSize);
-					transmitSize -= transmitted;
-
-					// consume data in the file
-					file.size -= transmitted;
-
-					// accumulate in the buffer
-					file.buff += transmitted;
-				}
-
-				// special case: file size on drive = 0 -> buffer is 0, so no need to do anyhting. just delete.
-				if (file.buff > double.Epsilon)
-				{
-					bool credit = file.size <= double.Epsilon;
-
-					// this is the science value remaining for this experiment
-					var remainingValue = Value(exp_filename, 0);
-
-					// this is the science value of this sample
-					double dataValue = Value(exp_filename, file.buff);
-
-					if (!credit && file.buff > min_buffer_size) credit = dataValue > buffer_science_value;
-
-					// if buffer is full, or file was transmitted completely
-					if (credit)
+					// remove zero-size samples that didn't grow last time
+					if (drive[i].type == FileType.Sample)
 					{
-						var totalValue = TotalValue(exp_filename);
+						if (drive[i].Size == 0 && drive[i].processRate == 0)
+							drive.RemoveAt(i);
 
-						// collect the science data
-						Credit(exp_filename, file.buff, true, v.protoVessel);
+						// for samples reset process rate and do nothing else
+						drive[i].processRate = 0;
+						continue;
+					}
 
-						// reset the buffer
-						file.buff = 0.0;
+					// delete zero size files that didn't grow and weren't transmitted last time
+					if (drive[i].Size == 0 && drive[i].processRate == 0 && drive[i].transmitRate == 0)
+					{
+						// credit the science value of the buffer
+						if (drive[i].BufferSize > 0)
+							Credit(drive[i], v.protoVessel, true);
+						// TODO : send a "bool transmissionEnd = true" to Credit(), so it check the science value remaining and alert the player when subject is completed
 
-						// this was the last useful bit, there is no more value in the experiment
-						if (remainingValue >= 0.1 && remainingValue - dataValue < 0.1)
+						drive.RemoveAt(i);
+						continue;
+					}
+
+					// we don't need the process rate anymore, reset it
+					drive[i].processRate = 0;
+
+					// if the file isn't flagged for transmission, reset the transmit rate
+					if (!drive[i].process)
+					{
+						drive[i].transmitRate = 0;
+						continue;
+					}
+
+					// file can be transmitted : add it the list
+					results.Add(drive[i]);
+				}
+			}
+
+			// sort results by the previous transmit rate, in ascending order
+			// this way we will keep transferring the same results at each sim step
+			// but priority will be given to newly generated results (they will be added at the end of the list)
+			results.Sort((x, y) => x.transmitRate.CompareTo(y.transmitRate));
+
+			// reset transmitRate now because it may be changed when transmitting process data
+			for (int i = 0; i < results.Count; i++)
+			{
+				results[i].transmitRate = 0;
+			}
+
+			// get all processes that can generate data, and sort the list with converter processes first
+			// note that all converters that can run are added, even if in the end they don't generate any data
+			// we can't know yet because some data to be converted may be generated by non-converters
+			int converterCount = 0;
+			foreach (DataProcess p in DataProcess.GetProcesses(v))
+			{
+				if (p.Update(v, elapsed_s))
+				{
+					if (p.isConverter)
+					{
+						// keep track of converter count to use it in the for loops
+						converterCount++;
+						// insert converters at the top (zero data generated for now)
+						processes.Insert(0, new PendingProcess(p, 0)); 
+					}
+					else
+					{
+						// add non-converters and get how much data they can generate
+						processes.Add(new PendingProcess(p, p.GetDataPending(v, elapsed_s)));
+					}
+				}
+			}
+
+			// for each converter process, get dataPending that may by generated by non-converter processes
+			// performance note : given the small amount of different processes that may be running at once
+			// it is probably faster to iterate than trying to cache dataPending in the previous loop
+			for (int i = 0; i < converterCount; i++)
+			{
+				
+
+				// we don't get data from non-converter processes if auto-analyze is disabled and the result don't exist yet
+				if (processes[i].process.convertedResult == null && !PreferencesScience.Instance.analyzeSamples)
+					continue;
+
+				long pendingDataToConvert = 0;
+
+				// for each non-converter process
+				for (int j = converterCount; j < processes.Count; j++)
+				{
+					// if the non-converter process is generating data that can be converted by the converter process
+					if (processes[j].process.type == FileType.Sample
+						&& processes[j].process.Subject.SubjectId == processes[i].process.Subject.SubjectId)
+					{
+						// the non converter process must have a result (that may stay empty), otherwise we can't get the Subject.
+						// Note that this allow producing a sample even if there is no storage capacity left
+						processes[j].process.CreateResult(v, 0);
+
+						if (processes[j].process.result == null)
+							break;
+
+						// get the data amount that is generated by the non-converter process and remember its index
+						processes[i].process.convertedResult = processes[j].process.result;
+						pendingDataToConvert += processes[j].dataPending;
+						processes[i].convertingFromIndex = j;
+						break;
+					}
+				}
+				processes[i].dataPending = processes[i].process.GetDataPending(v, elapsed_s, pendingDataToConvert);
+			}
+
+			// store and transmit data from processes, doing converters first
+			for (int i = 0; i < processes.Count; i++)
+			{
+				// transmit if :
+				// - there is some transmit capacity
+				// - result is a file
+				// - result is flagged for transfer or this is a new result and auto-transmit is true
+				if (transmitLeft > 0
+					&& processes[i].process.type == FileType.File
+					&& ((processes[i].process.result != null && processes[i].process.result.process) // bad choice of var names, i agree...
+						|| (processes[i].process.result == null && PreferencesScience.Instance.transmitScience)))
+				{
+					long transmitted = Math.Min(processes[i].dataPending, transmitLeft);
+					if (transmitted > 0)
+					{
+						// Some data is transmitted so we need a result object for the transmit buffer
+						// If no result exists, a new empty one is created (even if all drives ares full)
+						if (processes[i].process.CreateResult(v, 0))
+							results.Add(processes[i].process.result);
+
+						// at this point if the result is null, either there are no drives or only private drives on the vessel
+						if (processes[i].process.result != null)
 						{
-
-							Message.Post(
-								Lib.BuildString(Lib.HumanReadableScience(totalValue), " ", Experiment(exp_filename).FullName(exp_filename), " completed"),
-							  Lib.TextVariant(
-									"Our researchers will jump on it right now",
-									"This cause some excitement",
-									"These results are causing a brouhaha in R&D",
-									"Our scientists look very confused",
-									"The scientists won't believe these readings"
-								));
+							transmitLeft -= transmitted;
+							processes[i].dataPending -= transmitted;
+							processes[i].dataProcessed += transmitted;
+							processes[i].process.result.BufferSize += transmitted;
+							processes[i].process.result.transmitRate += (long)(transmitted / elapsed_s);
+							processes[i].process.result.processRate += (long)(transmitted / elapsed_s);
 						}
 					}
 				}
 
-				// if file was transmitted completely
-				if (file.size <= double.Epsilon)
+				// we have transmitted all we can, now try storing the remaining data in drives
+				while (processes[i].dataPending > 0)
 				{
-					// remove the file
-					drive.files.Remove(exp_filename);
-					vi.transmitting = Science.Transmitting(v, true);
+					// if we don't already have a result for this experiement,
+					// find a drive with at least 1 bit of space available and create a new result
+					processes[i].process.CreateResult(v, 1);
+
+					// if no result : all drives are full, abort
+					if (processes[i].process.result == null)
+						break;
+
+					// clamp data size to the drive available space
+					long stored = Math.Min(processes[i].process.result.DriveCapacityAvailable(), processes[i].dataPending);
+
+					// add data to the result and if the result has reached its max size,
+					// let the loop continue so we can try to create another one
+					if (processes[i].process.result.AddData(ref stored))
+					{
+						processes[i].process.result.processRate += (long)(stored / elapsed_s);
+					}	
+					else
+					{
+						processes[i].process.result.processRate += (long)(stored / elapsed_s);
+						processes[i].process.result = null;
+					}
+
+					// if drive is now full, try to find another one
+					if (stored < processes[i].dataPending)
+						processes[i].process.result = null;
+
+					// keep track of the data stored
+					processes[i].dataPending -= stored;
+					processes[i].dataProcessed += stored;
+				}
+
+				// if this is a converter, update the converted result / process
+				if (i < converterCount)
+				{
+					long dataToRemove = 0;
+					// are we converting data from a non-converter process ?
+					if (processes[i].convertingFromIndex >= 0)
+					{
+						// clamp the amount to the non-converter production and update its data pending/processed
+						dataToRemove = Math.Min(processes[processes[i].convertingFromIndex].dataPending, processes[i].dataProcessed);
+						processes[processes[i].convertingFromIndex].dataPending -= dataToRemove;
+						processes[processes[i].convertingFromIndex].dataProcessed += dataToRemove;
+						processes[i].process.convertedResult.processRate += (long)(dataToRemove / elapsed_s);
+						dataToRemove = processes[i].dataProcessed - dataToRemove;
+					}
+					// if we have processed more than what was generated by the process
+					// then we converted some data from a preexisting Result
+					if (processes[i].dataProcessed > dataToRemove)
+					{
+						processes[i].process.convertedResult.RemoveData(ref dataToRemove);
+					}
 				}
 			}
+
+			// if there is some transmit capacity left, transmit data stored in drives
+			if (transmitLeft > 0)
+			{
+				// traversing in reverse because list is sorted with highest priority results last
+				for (int i = results.Count - 1; i >= 0; i--)
+				{
+					if (results[i].Size <= 0) continue;
+					long transmitted = results[i].Size < transmitLeft ? results[i].Size : transmitLeft;
+
+					results[i].RemoveData(ref transmitted);
+					results[i].BufferSize += transmitted;
+					results[i].transmitRate += (long)(transmitted / elapsed_s);
+
+					transmitLeft -= transmitted;
+					if (transmitLeft <= 0) break;
+				}
+			}
+
+			// Now that every bit is accounted for, tell the processes to update themselves
+			for (int i = 0; i < processes.Count; i++)
+			{
+				processes[i].process.Process(v, elapsed_s, processes[i].dataProcessed);
+			}
+
+			// avoid corner-case when RnD isn't live during scene changes
+			// - this avoid losing science if the buffer reach threshold during a scene change
+			// TODO : where to put this ?
+			if (HighLogic.CurrentGame.Mode != Game.Modes.SANDBOX && ResearchAndDevelopment.Instance == null) return;
+
+			// all file sizes are now updated
+			// actually register data transmitted for files whose buffer is full
+			for (int i = 0; i < results.Count; i++)
+			{
+				if (results[i].BufferSize > 0 && results[i].BufferSize > results[i].MaxBufferSize)
+				{
+					Credit(results[i], v.protoVessel, true);
+					results[i].BufferSize = 0;
+				}
+			}
+
+			//TODO : we should not be updating the cache from here, but for now I don't care
+			vi.transmitting_rate = (long)((transmitCapacity - transmitLeft) / elapsed_s);
 		}
 
 		// return name of file being transmitted from vessel specified
+		// TODO : adapt this, and see how we can adjust EC consumption
 		public static string Transmitting(Vessel v, bool linked)
 		{
 			// never transmitting if science system is disabled
@@ -171,18 +442,15 @@ namespace KERBALISM
 			// not transmitting if there is no ec left
 			if (ResourceCache.Info(v, "ElectricCharge").amount <= double.Epsilon) return string.Empty;
 
-			foreach(var p in Cache.WarpCache(v).files)
-				return p.Key;
-
 			// get first file flagged for transmission, AND has a ts at least 5 seconds old or is > 0.001Mb in size
-			foreach (var drive in Drive.GetDrives(v, true))
-			{
-				double now = Planetarium.GetUniversalTime();
-				foreach (var p in drive.files)
-				{
-					if (drive.GetFileSend(p.Key) && (p.Value.ts + 3 < now || p.Value.size > min_file_size)) return p.Key;
-				}
-			}
+			//foreach (var drive in Drive.GetDrives(v, true))
+			//{
+			//	double now = Planetarium.GetUniversalTime();
+			//	foreach (var p in drive.files)
+			//	{
+			//		if (drive.GetFileSend(p.Key) && (p.Value.ts + 3 < now || p.Value.size > min_file_size)) return p.Key;
+			//	}
+			//}
 
 			// no file flagged for transmission
 			return string.Empty;
@@ -190,81 +458,77 @@ namespace KERBALISM
 
 
 		// credit science for the experiment subject specified
-		public static float Credit(string subject_id, double size, bool transmitted, ProtoVessel pv)
+		// TODO : move this to a 100% event based implementation
+		// OnScienceRecieved.Fire send the full list of every Result transmitted
+		// then do the actual crediting once from the kerbalism main loop after every vessel Science.Update()
+		public static float Credit(Result result, ProtoVessel pv, bool transmitOnly)
 		{
-			var credits = Value(subject_id, size);
+			float credits;
 
-			// credit the science
-			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
+			// try to get the stock subject from the stock scienceSubjects dictionary
+			ScienceSubject subject = ResearchAndDevelopment.GetSubjectByID(result.subjectId);
+
 			if(subject == null)
 			{
-				Lib.Log("WARNING: science subject " + subject_id + " cannot be credited in R&D");
+				// if null, the stock subject doesn't exist yet. We have to create and add it.
+				// get the private stock subjects dictionary
+				var scienceSubjects = Lib.ReflectionValue<Dictionary<string, ScienceSubject>>
+				(
+				  ResearchAndDevelopment.Instance,
+				  "scienceSubjects"
+				);
+
+				if (scienceSubjects != null)
+				{
+					subject = result.ParseToStockSubject(transmitOnly);
+					credits = subject.science;
+					scienceSubjects.Add(result.subjectId, subject);
+				}
+				else
+				{
+					Lib.Log("WARNING: science subject " + result.subjectId + " cannot be credited in R&D");
+					return 0f;
+				}
 			}
 			else
 			{
-				subject.science += credits / HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
+				// the stock subject already exists : increase the science stored.
+				credits = transmitOnly ?
+				(float)result.ScienceValueBase(result.BufferSize) :
+				(float)result.ScienceValueBase(result.Size + result.BufferSize);
+
+				subject.science += credits;
 				subject.scientificValue = ResearchAndDevelopment.GetSubjectValue(subject.science, subject);
-				ResearchAndDevelopment.Instance.AddScience(credits, transmitted ? TransactionReasons.ScienceTransmission : TransactionReasons.VesselRecovery);
-
-				// fire game event
-				// - this could be slow or a no-op, depending on the number of listeners
-				//   in any case, we are buffering the transmitting data and calling this
-				//   function only once in a while
-				GameEvents.OnScienceRecieved.Fire(credits, subject, pv, false);
-
-				API.OnScienceReceived.Fire(credits, subject, pv, transmitted);
 			}
 
-			// return amount of science credited
+			// remove the data from our result
+			result.BufferSize = 0;
+			if (!transmitOnly)
+				result.RemoveAllData();
+
+			// apply the game difficulty factor :
+			credits *= HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
+			// and finaly give the credits to the player
+			ResearchAndDevelopment.Instance.AddScience(credits,transmitOnly ? TransactionReasons.ScienceTransmission : TransactionReasons.VesselRecovery);
+
+			// fire game event
+			// - this could be slow or a no-op, depending on the number of listeners
+			//   in any case, we are buffering the transmitting data and calling this
+			//   function only once in a while
+			GameEvents.OnScienceRecieved.Fire(credits, subject, pv, false);
+
+			//API.OnScienceReceived.Fire(credits, subject, pv, transmitted);
+
 			return credits;
-		}
 
-
-		// return value of some data about a subject, in science credits
-		public static float Value(string subject_id, double size = 0)
-		{
-			if (string.IsNullOrEmpty(subject_id))
-				return 0;
-			
-			if(size < double.Epsilon)
-			{
-				var exp = Science.Experiment(subject_id);
-				size = exp.max_amount;
-			}
-
-			// get science subject
-			// - if null, we are in sandbox mode
-			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
-			if (subject == null) return 0.0f;
-
-			// get science value
-			// - the stock system 'degrade' science value after each credit, we don't
-			double R = ResearchAndDevelopment.GetReferenceDataValue((float)size, subject);
-
-			double S = subject.science;
-			double C = subject.scienceCap;
-			double credits = Math.Max(Math.Min(S + Math.Min(R, C), C) - S, 0.0);
-
-			credits *= HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
-
-			return (float)credits;
-		}
-
-		// return total value of some data about a subject, in science credits
-		public static float TotalValue(string subject_id)
-		{
-			var exp = Science.Experiment(subject_id);
-			var size = exp.max_amount;
-
-			// get science subject
-			// - if null, we are in sandbox mode
-			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
-			if (subject == null) return 0.0f;
-
-			double credits = ResearchAndDevelopment.GetReferenceDataValue((float)size, subject);
-			credits *= HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
-
-			return (float)credits;
+			// TODO : message when subject is completed
+			//			Message.Post(
+			//				Lib.BuildString(Lib.HumanReadableScience(totalValue), " ", Experiment(exp_filename).FullName(exp_filename), " completed"),
+			//			  Lib.TextVariant(
+			//					"Our researchers will jump on it right now",
+			//					"There is excitement because of your findings",
+			//					"The results are causing a brouhaha in R&D"
+			//				));
 		}
 
 		// return module acting as container of an experiment
@@ -282,265 +546,85 @@ namespace KERBALISM
 			return p.FindModuleImplementing<IScienceDataContainer>();
 		}
 
-
-		// return info about an experiment
-		public static ExperimentInfo Experiment(string subject_id)
+		/// <summary>
+		/// return the ExperimentInfo object corresponding to a "experiment_id"
+		/// </summary>
+		public static ExperimentVariant GetExperimentVariant(string variant_id)
 		{
-			ExperimentInfo info;
-			if (!experiments.TryGetValue(subject_id, out info))
+			if (!exp_variants.ContainsKey(variant_id))
 			{
-				info = new ExperimentInfo(subject_id);
-				experiments.Add(subject_id, info);
+				Lib.Log("ERROR: No ExperimentInfo found for id " + variant_id);
+				return null;
 			}
-			return info;
+			return exp_variants[variant_id];
 		}
 
-		public static string Generate_subject_id(string experiment_id, Vessel v)
+		/// <summary>
+		/// return the ExperimentInfo object corresponding to a "experiment_id"
+		/// </summary>
+		public static ExperimentInfo GetExperimentInfo(string experiment_id)
 		{
-			var body = v.mainBody;
-			ScienceExperiment experiment = ResearchAndDevelopment.GetExperiment(experiment_id);
-			ExperimentSituation sit = GetExperimentSituation(v);
-
-			var sitStr = sit.ToString();
-			if(!string.IsNullOrEmpty(sitStr))
+			if (!exp_infos.ContainsKey(experiment_id))
 			{
-				if (sit.BiomeIsRelevant(Experiment(experiment_id)))
-					sitStr += ScienceUtil.GetExperimentBiome(v.mainBody, v.latitude, v.longitude);
+				Lib.Log("ERROR: No ExperimentInfo found for id " + experiment_id);
+				return null;
 			}
-
-			// generate subject id
-			return Lib.BuildString(experiment_id, "@", body.name, sitStr);
+			return exp_infos[experiment_id];
 		}
 
-		public static string Generate_subject(string experiment_id, Vessel v)
+		/// <summary>
+		/// return the ExperimentInfo object corresponding to a subject_id, formatted as "experiment_id@situation"
+		/// </summary>
+		public static ExperimentInfo GetExperimentInfoFromSubject(string subject_id)
 		{
-			var subject_id = Generate_subject_id(experiment_id, v);
-
-			// in sandbox, do nothing else
-				if (ResearchAndDevelopment.Instance == null) return subject_id;
-
-			// if the subject id was never added to RnD
-			if (ResearchAndDevelopment.GetSubjectByID(subject_id) == null)
-			{
-				// get subjects container using reflection
-				// - we tried just changing the subject.id instead, and
-				//   it worked but the new id was obviously used only after
-				//   putting RnD through a serialization->deserialization cycle
-				var subjects = Lib.ReflectionValue<Dictionary<string, ScienceSubject>>
-				(
-				  ResearchAndDevelopment.Instance,
-				  "scienceSubjects"
-				);
-
-				var experiment = ResearchAndDevelopment.GetExperiment(experiment_id);
-				var sit = GetExperimentSituation(v);
-				var biome = ScienceUtil.GetExperimentBiome(v.mainBody, v.latitude, v.longitude);
-				float multiplier = sit.Multiplier(Experiment(experiment_id));
-				var cap = multiplier * experiment.baseValue;
-
-				// create new subject
-				ScienceSubject subject = new ScienceSubject
-				(
-				  		subject_id,
-						Lib.BuildString(experiment.experimentTitle, " (", Lib.SpacesOnCaps(sit + biome), ")"),
-						experiment.dataScale,
-				  		multiplier,
-						cap
-				);
-
-				// add it to RnD
-				subjects.Add(subject_id, subject);
-			}
-
-			return subject_id;
+			return GetExperimentInfo(GetExperimentId(subject_id));
 		}
 
-		public static string TestRequirements(string experiment_id, string requirements, Vessel v)
+		/// <summary>
+		/// Get experiment id from a full subject id
+		/// </summary>
+		public static string GetExperimentId(string subject_id)
 		{
-			CelestialBody body = v.mainBody;
-			Vessel_info vi = Cache.VesselInfo(v);
-
-			List<string> list = Lib.Tokenize(requirements, ',');
-			foreach (string s in list)
-			{
-				var parts = Lib.Tokenize(s, ':');
-
-				var condition = parts[0];
-				string value = string.Empty;
-				if(parts.Count > 1) value = parts[1];
-
-				bool good = true;
-				switch (condition)
-				{
-					case "OrbitMinInclination": good = Math.Abs(v.orbit.inclination) >= double.Parse(value); break;
-					case "OrbitMaxInclination": good = Math.Abs(v.orbit.inclination) <= double.Parse(value); break;
-					case "OrbitMinEccentricity": good = v.orbit.eccentricity >= double.Parse(value); break;
-					case "OrbitMaxEccentricity": good = v.orbit.eccentricity <= double.Parse(value); break;
-					case "OrbitMinArgOfPeriapsis": good = v.orbit.argumentOfPeriapsis >= double.Parse(value); break;
-					case "OrbitMaxArgOfPeriapsis": good = v.orbit.argumentOfPeriapsis <= double.Parse(value); break;
-
-					case "TemperatureMin": good = vi.temperature >= double.Parse(value); break;
-					case "TemperatureMax": good = vi.temperature <= double.Parse(value); break;
-					case "AltitudeMin": good = v.altitude >= double.Parse(value); break;
-					case "AltitudeMax": good = v.altitude <= double.Parse(value); break;
-					case "RadiationMin": good = vi.radiation >= double.Parse(value); break;
-					case "RadiationMax": good = vi.radiation <= double.Parse(value); break;
-					case "Microgravity": good = vi.zerog; break;
-					case "Body": good = TestBody(v.mainBody.name, value); break;
-					case "Shadow": good = vi.sunlight < double.Epsilon; break;
-					case "Sunlight": good = vi.sunlight > 0.5; break;
-					case "CrewMin": good = vi.crew_count >= int.Parse(value); break;
-					case "CrewMax": good = vi.crew_count <= int.Parse(value); break;
-					case "CrewCapacityMin": good = vi.crew_capacity >= int.Parse(value); break;
-					case "CrewCapacityMax": good = vi.crew_capacity <= int.Parse(value); break;
-					case "VolumePerCrewMin": good = vi.volume_per_crew >= double.Parse(value); break;
-					case "VolumePerCrewMax": good = vi.volume_per_crew <= double.Parse(value); break;
-					case "Greenhouse": good = vi.greenhouses.Count > 0; break;
-					case "Surface": good = Lib.Landed(v); break;
-					case "Atmosphere": good = body.atmosphere && v.altitude < body.atmosphereDepth; break;
-					case "AtmosphereBody": good = body.atmosphere; break;
-					case "AtmosphereAltMin": good = body.atmosphere && (v.altitude / body.atmosphereDepth) >= double.Parse(value); break;
-					case "AtmosphereAltMax": good = body.atmosphere && (v.altitude / body.atmosphereDepth) <= double.Parse(value); break;
-
-					case "BodyWithAtmosphere": good = body.atmosphere; break;
-					case "BodyWithoutAtmosphere": good = !body.atmosphere; break;
-						
-					case "SunAngleMin": good = Lib.SunBodyAngle(v) >= double.Parse(value); break;
-					case "SunAngleMax": good = Lib.SunBodyAngle(v) <= double.Parse(value); break;
-
-					case "Vacuum": good = !body.atmosphere || v.altitude > body.atmosphereDepth; break;
-					case "Ocean": good = body.ocean && v.altitude < 0.0; break;
-					case "PlanetarySpace": good = body.flightGlobalsIndex != 0 && !Lib.Landed(v) && v.altitude > body.atmosphereDepth; break;
-					case "AbsoluteZero": good = vi.temperature < 30.0; break;
-					case "InnerBelt": good = vi.inner_belt; break;
-					case "OuterBelt": good = vi.outer_belt; break;
-					case "MagneticBelt": good = vi.inner_belt || vi.outer_belt; break;
-					case "Magnetosphere": good = vi.magnetosphere; break;
-					case "Thermosphere": good = vi.thermosphere; break;
-					case "Exosphere": good = vi.exosphere; break;
-					case "InterPlanetary": good = body.flightGlobalsIndex == 0 && !vi.interstellar; break;
-					case "InterStellar": good = body.flightGlobalsIndex == 0 && vi.interstellar; break;
-
-					case "SurfaceSpeedMin": good = v.srfSpeed >= double.Parse(value); break;
-					case "SurfaceSpeedMax": good = v.srfSpeed <= double.Parse(value); break;
-					case "VerticalSpeedMin": good = v.verticalSpeed >= double.Parse(value); break;
-					case "VerticalSpeedMax": good = v.verticalSpeed <= double.Parse(value); break;
-					case "SpeedMin": good = v.speed >= double.Parse(value); break;
-					case "SpeedMax": good = v.speed <= double.Parse(value); break;
-					case "DynamicPressureMin": good = v.dynamicPressurekPa >= double.Parse(value); break;
-					case "DynamicPressureMax": good = v.dynamicPressurekPa <= double.Parse(value); break;
-					case "StaticPressureMin": good = v.staticPressurekPa >= double.Parse(value); break;
-					case "StaticPressureMax": good = v.staticPressurekPa <= double.Parse(value); break;
-					case "AtmDensityMin": good = v.atmDensity >= double.Parse(value); break;
-					case "AtmDensityMax": good = v.atmDensity <= double.Parse(value); break;
-					case "AltAboveGroundMin": good = v.heightFromTerrain >= double.Parse(value); break;
-					case "AltAboveGroundMax": good = v.heightFromTerrain <= double.Parse(value); break;
-
-					case "Part": good = Lib.HasPart(v, value); break;
-					case "Module": good = Lib.FindModules(v.protoVessel, value).Count > 0; break;
-						
-					case "AstronautComplexLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.AstronautComplex) >= (double.Parse(value) - 1) / 2.0;
-						break;
-					case "AstronautComplexLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.AstronautComplex) <= (double.Parse(value) - 1) / 2.0;
-						break;
-
-					case "TrackingStationLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.TrackingStation) >= (double.Parse(value) - 1) / 2.0;
-						break;
-					case "TrackingStationLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.TrackingStation) <= (double.Parse(value) - 1) / 2.0;
-						break;
-
-					case "MissionControlLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.MissionControl) >= (double.Parse(value) - 1) / 2.0;
-						break;
-					case "MissionControlLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.MissionControl) <= (double.Parse(value) - 1) / 2.0;
-						break;
-
-					case "AdministrationLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.Administration) >= (double.Parse(value) - 1) / 2.0;
-						break;
-					case "AdministrationLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.Administration) <= (double.Parse(value) - 1) / 2.0;
-						break;
-
-					case "MaxAsteroidDistance": good = AsteroidDistance(v) <= double.Parse(value); break;
-				}
-
-				if (!good) return s;
-			}
-
-			var subject_id = Science.Generate_subject_id(experiment_id, v);
-			var exp = Science.Experiment(subject_id);
-			var sit = GetExperimentSituation(v);
-
-			if (!v.loaded && sit.AtmosphericFlight())
-				return "Background flight";
-
-			if (!sit.IsAvailable(exp))
-				return "Invalid situation";
-
-
-			// At this point we know the situation is valid and the experiment can be done
-			// create it in R&D
-			Science.Generate_subject(experiment_id, v);
-
-			return string.Empty;
+			int i = subject_id.IndexOf('@');
+			return i > 0 ? subject_id.Substring(0, i) : subject_id;
 		}
 
-		public static ExperimentSituation GetExperimentSituation(Vessel v)
+		#region Global subject cache
+
+		public static Subject GetSubjectFromCache(string subject_id)
 		{
-			return new ExperimentSituation(v);
+			if (subjects.ContainsKey(subject_id))
+				return subjects[subject_id];
+
+			return null;
 		}
 
-		private static bool TestBody(string bodyName, string requirement)
+		// Remove all data stored in a drive from the global in-flight subject data cache
+		public static void ClearFlightSubjectData(Drive drive)
 		{
-			foreach(string s in Lib.Tokenize(requirement, ';'))
+			for (int i = 0; i < drive.Count; i++)
 			{
-				if (s == bodyName) return true;
-				if(s[0] == '!' && s.Substring(1) == bodyName) return false;
+				AddFlightSubjectData(drive[i].subjectId, -drive[i].SizeWithBuffer);
 			}
-			return false;
 		}
 
-		private static double AsteroidDistance(Vessel vessel)
+		// Get stored data from the global in-flight subject data cache
+		public static long GetFlightSubjectData(string subject_id)
+		{ return subjects.ContainsKey(subject_id) ? subjects[subject_id].dataStoredFlight : 0; }
+
+		// Add data/remove data from the global in-flight subject data cache
+		public static void AddFlightSubjectData(string subject_id, long amount)
 		{
-			var target = vessel.targetObject;
-			var vesselPosition = Lib.VesselPosition(vessel);
-
-			// while there is a target, only consider the targeted vessel
-			if(!vessel.loaded || target != null)
-			{
-				// asteroid MUST be the target if vessel is unloaded
-				if (target == null) return double.MaxValue;
-
-				var targetVessel = target.GetVessel();
-				if (targetVessel == null) return double.MaxValue;
-
-				if (targetVessel.vesselType != VesselType.SpaceObject) return double.MaxValue;
-
-				// this assumes that all vessels of type space object are asteroids.
-				// should be a safe bet unless Squad introduces alien UFOs.
-				var asteroidPosition = Lib.VesselPosition(targetVessel);
-				return Vector3d.Distance(vesselPosition, asteroidPosition);
-			}
-
-			// there's no target and vessel is not unloaded
-			// look for nearby asteroids
-			double result = double.MaxValue;
-			foreach(Vessel v in FlightGlobals.VesselsLoaded)
-			{
-				if (v.vesselType != VesselType.SpaceObject) continue;
-				var asteroidPosition = Lib.VesselPosition(v);
-				double distance = Vector3d.Distance(vesselPosition, asteroidPosition);
-				if (distance < result) result = distance;
-			}
-			return result;
+			if (subjects.ContainsKey(subject_id))
+				subjects[subject_id].dataStoredFlight += amount;
 		}
 
+		#endregion
+
+		#region Experiments utils
+
+
+		// TODO : migrate to ExperimentVariant
 		public static string RequirementText(string requirement)
 		{
 			var parts = Lib.Tokenize(requirement, ':');
@@ -575,9 +659,6 @@ namespace KERBALISM
 				case "VolumePerCrewMax": return Lib.BuildString("Max. vol./crew ", Lib.HumanReadableVolume(double.Parse(value)));
 				case "MaxAsteroidDistance": return Lib.BuildString("Max. asteroid distance ", Lib.HumanReadableRange(double.Parse(value)));
 
-				case "SunAngleMin": return Lib.BuildString("Min. sun angle ", Lib.HumanReadableAngle(double.Parse(value)));
-				case "SunAngleMax": return Lib.BuildString("Max. sun angle ", Lib.HumanReadableAngle(double.Parse(value)));
-					
 				case "AtmosphereBody": return "Body with atmosphere";
 				case "AtmosphereAltMin": return Lib.BuildString("Min. atmosphere altitude ", value);
 				case "AtmosphereAltMax": return Lib.BuildString("Max. atmosphere altitude ", value);
@@ -626,37 +707,17 @@ namespace KERBALISM
 			return result;
 		}
 
-		public static void RegisterSampleMass(string experiment_id, double sampleMass)
-		{
-			// get experiment id out of subject id
-			int i = experiment_id.IndexOf('@');
-			var id = i > 0 ? experiment_id.Substring(0, i) : experiment_id;
+		#endregion
 
-			if (sampleMasses.ContainsKey(id))
-			{
-				if (Math.Abs(sampleMasses[id] - sampleMass) > double.Epsilon)
-					Lib.Log("Science Warning: different sample masses for Experiment " + id + " defined.");
-			}
-			else
-			{
-				sampleMasses.Add(id, sampleMass);
-				Lib.Log("Science: registered sample mass for " + id + ": " + sampleMass.ToString("F3"));
-			}
-		}
 
-		public static double GetSampleMass(string experiment_id)
-		{
-			// get experiment id out of subject id
-			int i = experiment_id.IndexOf('@');
-			var id = i > 0 ? experiment_id.Substring(0, i) : experiment_id;
 
-			if (!sampleMasses.ContainsKey(id)) return 0;
-			return sampleMasses[id];
-		}
+		
 
-		// experiment info cache
-		static readonly Dictionary<string, ExperimentInfo> experiments = new Dictionary<string, ExperimentInfo>();
-		readonly static Dictionary<string, double> sampleMasses = new Dictionary<string, double>();
+		// experiment info 
+		private static readonly Dictionary<string, ExperimentInfo> exp_infos = new Dictionary<string, ExperimentInfo>();
+		private static readonly Dictionary<string, ExperimentVariant> exp_variants = new Dictionary<string, ExperimentVariant>();
+		private static readonly Dictionary<string, Subject> subjects = new Dictionary<string, Subject>();
+		private static readonly Dictionary<CelestialBody, string[]> biomes = new Dictionary<CelestialBody, string[]>();
 
 	}
 

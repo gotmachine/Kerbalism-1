@@ -187,7 +187,6 @@ namespace KERBALISM
 					if (input.name == "WasteAtmosphere" || input.name == "CarbonDioxide")
 					{
 						if (dis_WACO2 || Cache.VesselInfo(vessel).breathable) continue;    // skip if already checked or atmosphere is breathable
-						if (WACO2)
 						{
 							if (resources.Info(vessel, "WasteAtmosphere").amount <= double.Epsilon && resources.Info(vessel, "CarbonDioxide").amount <= double.Epsilon)
 							{

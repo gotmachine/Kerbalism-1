@@ -5,6 +5,9 @@ using UnityEngine;
 
 namespace KERBALISM
 {
+
+	/*
+
 	public sealed class KerbalismScansat : PartModule
 	{
 		[KSPField] public string experimentType = string.Empty;
@@ -67,10 +70,26 @@ namespace KERBALISM
 					Science.Generate_subject(experimentType, vessel);
 					var subject_id = Science.Generate_subject_id(experimentType, vessel);
 					var exp = Science.Experiment(subject_id);
-					double size = exp.max_amount * coverage_delta / 100.0; // coverage is 0-100%
+					double size = exp.data_max * coverage_delta / 100.0; // coverage is 0-100%
+
 					size += warp_buffer;
 
-					size = Drive.StoreFile(vessel, subject_id, size);
+					if(size > double.Epsilon)
+					{
+						// store what we can
+						foreach (var d in Drive.GetDrives(vessel))
+						{
+							var available = d.FileCapacityAvailable();
+							var chunk = Math.Min(size, available);
+							if (!d.Record_file(subject_id, chunk, true))
+								break;
+							size -= chunk;
+
+							if (size < double.Epsilon)
+								break;
+						}
+					}
+
 					if (size > double.Epsilon)
 					{
 						// we filled all drives up to the brim but were unable to store everything
@@ -103,7 +122,7 @@ namespace KERBALISM
 				else if(vd.scansat_id.Contains(part.flightID))
 				{
 					var vi = Cache.VesselInfo(vessel);
-					if(vi.free_capacity / vi.total_capacity > 0.9) // restart when 90% of capacity is available 
+					if(vi.drive_fileusage < 0.1) // restart when 90% of capacity is available 
 					{
 						StartScan();
 						vd.scansat_id.Remove(part.flightID);
@@ -208,7 +227,7 @@ namespace KERBALISM
 					Science.Generate_subject(kerbalismScansat.experimentType, vessel);
 					var subject_id = Science.Generate_subject_id(kerbalismScansat.experimentType, vessel);
 					var exp = Science.Experiment(subject_id);
-					double size = exp.max_amount * coverage_delta / 100.0; // coverage is 0-100%
+					double size = exp.data_max * coverage_delta / 100.0; // coverage is 0-100%
 					size += warp_buffer;
 
 					if (size > double.Epsilon)
@@ -260,7 +279,7 @@ namespace KERBALISM
 				else if (vd.scansat_id.Contains(p.flightID))
 				{
 					var vi = Cache.VesselInfo(vessel);
-					if (ec.level >= 0.25 && (vi.free_capacity / vi.total_capacity > 0.9))
+					if (ec.level >= 0.25 && vi.drive_fileusage < 0.1)
 					{
 						SCANsat.ResumeScanner(vessel, scanner, part_prefab);
 						vd.scansat_id.Remove(p.flightID);
@@ -274,4 +293,6 @@ namespace KERBALISM
 			Lib.Proto.Set(m, "body_name", body_name);
 		}
 	}
+
+	*/
 }

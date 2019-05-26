@@ -92,12 +92,16 @@ namespace KERBALISM.Planner
 						case "Emitter":
 							Process_emitter(m as Emitter);
 							break;
-						case "Laboratory":
-							Process_laboratory(m as Laboratory);
-							break;
-						case "Experiment":
-							Process_experiment(m as Experiment);
-							break;
+							// TODO : lab, experiment, scansat
+						//case "Laboratory":
+						//	Process_laboratory(m as Laboratory);
+						//	break;
+						//case "Experiment":
+						//	Process_experiment(m as Experiment);
+						//	break;
+						//case "KerbalismScansat":
+						//	Process_scanner(m as KerbalismScansat);
+						//	break;
 						case "ModuleCommand":
 							Process_command(m as ModuleCommand);
 							break;
@@ -136,9 +140,6 @@ namespace KERBALISM.Planner
 							break;
 						case "ModuleMultiPointSurfaceLight":
 							Process_light(m as ModuleLight);
-							break;
-						case "KerbalismScansat":
-							Process_scanner(m as KerbalismScansat);
 							break;
 						case "ModuleCurvedSolarPanel":
 							Process_curved_panel(p, m, env);
@@ -366,6 +367,8 @@ namespace KERBALISM.Planner
 		}
 
 
+		// TODO : lab, experiment, scansat
+		/*
 		void Process_laboratory(Laboratory lab)
 		{
 			// note: we are not checking if there is a scientist in the part
@@ -384,6 +387,11 @@ namespace KERBALISM.Planner
 			}
 		}
 
+		void Process_scanner(KerbalismScansat m)
+		{
+			Resource("ElectricCharge").Consume(m.ec_rate, "scanner");
+		}
+		*/
 
 		void Process_command(ModuleCommand command)
 		{
@@ -512,10 +520,7 @@ namespace KERBALISM.Planner
 		}
 
 
-		void Process_scanner(KerbalismScansat m)
-		{
-			Resource("ElectricCharge").Consume(m.ec_rate, "scanner");
-		}
+
 
 
 		void Process_curved_panel(Part p, PartModule m, EnvironmentAnalyzer env)

@@ -638,12 +638,6 @@ namespace KERBALISM
 			return BuildString(temp.ToString("F1"), " K");
 		}
 
-		///<summary> Pretty-print angle </summary>
-		public static string HumanReadableAngle(double angle)
-		{
-			return BuildString(angle >= 0.0001 ? angle.ToString("F1") : "0", " °");
-		}
-
 		///<summary> Pretty-print flux </summary>
 		public static string HumanReadableFlux(double flux)
 		{
@@ -717,52 +711,160 @@ namespace KERBALISM
 			return (Math.Abs(value) <= 0 ? "none" : BuildString(value.ToString("F0"), append));
 		}
 
-		///<summary> Format data size, the size parameter is in MB </summary>
-		public static string HumanReadableDataSize(double size)
+		///<summary>Format a data size provided in MB</summary>
+		public static string HumanReadableDataSize(double MB)
 		{
-			size *= 131072.0; //< bits
-			if (size < 0.01) return "none";
-			if (size <= 32.0) return BuildString(size.ToString("F0"), " b");
-			size *= 8; //< to bytes
-			if (size < 1024.0) return BuildString(size.ToString("F0"), " B");
-			size /= 1024.0;
-			if (size < 1024.0) return BuildString(size.ToString("F2"), " kB");
-			size /= 1024.0;
-			if (size < 1024.0) return BuildString(size.ToString("F2"), " MB");
-			size /= 1024.0;
-			if (size < 1024.0) return BuildString(size.ToString("F2"), " GB");
-			size /= 1024.0;
-			return BuildString(size.ToString("F2"), " TB");
+			MB *= 131072.0; //< bits
+			if (MB < 1.0) return "none";
+			if (MB <= 32.0) return BuildString(MB.ToString("F0"), " b");
+			MB *= 8; //< to bytes
+			if (MB < 1024.0) return BuildString(MB.ToString("F0"), " B");
+			MB /= 1024.0;
+			if (MB < 1024.0) return BuildString(MB.ToString("F2"), " kB");
+			MB /= 1024.0;
+			if (MB < 1024.0) return BuildString(MB.ToString("F2"), " MB");
+			MB /= 1024.0;
+			if (MB < 1024.0) return BuildString(MB.ToString("F2"), " GB");
+			MB /= 1024.0;
+			return BuildString(MB.ToString("F2"), " TB");
+		}
+
+		///<summary>Format a data size provided in bit, with optional conversion to sample size</summary>
+		public static string HumanReadableDataSize(long bit, bool asSampleSize = false)
+		{
+			if (asSampleSize)
+				return ((double)bit / slotSize).ToString("F2");
+
+			if (bit >= 8796093022208)
+				return BuildString(((double)bit / 8796093022208).ToString("F2"), " TB");
+			if (bit >= 8589934592)
+				return BuildString(((double)bit / 8589934592).ToString("F2"), " GB");
+			if (bit >= 8388608)
+				return BuildString(((double)bit / 8388608).ToString("F2"), " MB");
+			if (bit >= 8192)
+				return BuildString(((double)bit / 8192).ToString("F2"), " KB");
+			if (bit >= 8)
+				return BuildString(((double)bit / 8).ToString("F0"), " B");
+
+			return BuildString(bit.ToString(), " b");
+		}
+
+		///<summary>Format data utilization (x/x) provided in MB </summary>
+		public static string HumanReadableDataUsage(double size, double capacity)
+		{
+			capacity *= 131072.0; //< bits
+			if (capacity < 1.0) return "none";
+			if (capacity <= 32.0) return BuildString((size * 131072.0).ToString("F0"), "/", capacity.ToString("F0"), " b");
+			capacity *= 8; //< to bytes
+			if (capacity < 1024.0) return BuildString((size * 1048576.0).ToString("F0"), "/", capacity.ToString("F0"), " B");
+			capacity /= 1024.0;
+			if (capacity < 1024.0) return BuildString((size * 1024).ToString("F2"), "/", capacity.ToString("F2"), " kB");
+			capacity /= 1024.0;
+			if (capacity < 1024.0) return BuildString(size.ToString("F2"), "/", capacity.ToString("F2"), " MB");
+			capacity /= 1024.0;
+			if (capacity < 1024.0) return BuildString((size / 1024.0).ToString("F2"), "/", capacity.ToString("F2"), " GB");
+			capacity /= 1024.0;
+			return BuildString((size / 1048576.0).ToString("F2"), "/", capacity.ToString("F2"), " TB");
+		}
+
+		///<summary>Format data utilization (x/x) provided in bit </summary>
+		public static string HumanReadableDataUsage(long size, long capacity)
+		{
+			if (capacity >= 8796093022208)
+				return BuildString(((double)size / 8796093022208).ToString("F2"),
+					"/", ((double)capacity / 8796093022208).ToString("F2"), " TB");
+			if (capacity >= 8589934592)
+				return BuildString(((double)size / 8589934592).ToString("F2"),
+					"/", ((double)capacity / 8589934592).ToString("F2"), " GB");
+			if (capacity >= 8388608)
+				return BuildString(((double)size / 8388608).ToString("F2"),
+					"/", ((double)capacity / 8388608).ToString("F2"), " MB");
+			if (capacity >= 8192)
+				return BuildString(((double)size / 8192).ToString("F2"),
+					"/", ((double)capacity / 8192).ToString("F2"), " KB");
+			if (capacity >= 8)
+				return BuildString(((double)size / 8).ToString("F0"),
+					"/", ((double)capacity / 8).ToString("F0"), " B");
+			return BuildString(size.ToString(),"/", capacity.ToString(), " b");
 		}
 
 		///<summary> Format data rate, the rate parameter is in Mb/s </summary>
-		public static string HumanReadableDataRate(double rate)
+		public static string HumanReadableDataRate(double MBrate)
 		{
-			return rate < double.Epsilon ? "none" : Lib.BuildString(HumanReadableDataSize(rate), "/s");
+			return MBrate < 0.000001 ? "none" : Lib.BuildString(HumanReadableDataSize(MBrate), "/s");
 		}
 
-		public static string HumanReadableSampleSize(double size)
+		///<summary> Format data rate, the rate parameter is in bit/s </summary>
+		public static string HumanReadableDataRate(long BitRate)
 		{
-			return HumanReadableSampleSize(SampleSizeToSlots(size));
+			return BuildString(HumanReadableDataSize(BitRate), "/s");
 		}
 
-		public static string HumanReadableSampleSize(int slots)
+		public static string HumanReadableSampleSlotAndMass(long bitSize, double massPerBit)
+		{
+			string slots = HumanReadableSampleSlots(SampleSizeToFullSlots(bitSize));
+			string mass = HumanReadableMass(bitSize * massPerBit);
+			return Lib.BuildString(slots, " (", mass, ")");
+		}
+
+			public static string HumanReadableSampleSize(long size)
+		{
+			return HumanReadableSampleSlots(SampleSizeToFullSlots(size));
+		}
+
+		public static string HumanReadableSampleSlots(long slots)
 		{
 			if (slots <= 0) return Lib.BuildString("no ", Localizer.Format("#KERBALISM_Generic_SLOT"));
 
 			return Lib.BuildString(slots.ToString(), " ", slots > 1 ? Localizer.Format("#KERBALISM_Generic_SLOTS") : Localizer.Format("#KERBALISM_Generic_SLOT"));
 		}
 
-		public static int SampleSizeToSlots(double size)
+		/// <summary>
+		/// convert a floating point data size in MB to an integer size in bit
+		/// </summary>
+		public static long MBToBit(double MB)
 		{
-			int result = (int)(size / 1024);
-			if (result * 1024 < size) ++result;
+			double bits = Math.Min(MB * 8388608.0, long.MaxValue);
+			return (long)bits;
+		}
+
+		/// <summary>
+		/// convert an integer data size in bit to a floating point size in MB
+		/// </summary>
+		public static double BitToMB(long bits)
+		{
+			return (double)bits / 8388608.0;
+		}
+
+		public const long slotSize = 8589934592;
+
+		/// <summary>
+		/// convert a sample data size in slot amount, rounded up
+		/// <para/> 1 slot = 1024 Megabyte (MB) = 8589934592 bits
+		/// </summary>
+		public static long SampleSizeToFullSlots(long size)
+		{
+			long result = size / slotSize; 
+			if (result * slotSize < size) ++result;
 			return result;
 		}
 
-		public static double SlotsToSampleSize(int slots)
+		/// <summary>
+		/// size in bit that will be left empty in the last partially filled slot
+		/// </summary>
+		public static long SizeLostBySlotting(long size)
 		{
-			return slots * 1024;
+			long result = size - ((size / slotSize) * slotSize);
+			result = slotSize - result;
+			return result;
+		}
+
+		/// <summary>
+		/// return true if size match full slots 
+		/// </summary>
+		public static bool SampleSizeFillFullSlots(long size)
+		{
+			return size % slotSize == 0;
 		}
 
 		///<summary> Format science credits </summary>
@@ -853,15 +955,15 @@ namespace KERBALISM
 		public static double SunBodyAngle(Vessel v)
 		{
 			// orbit around sun?
-			if (v.mainBody.flightGlobalsIndex == 0) {
+			if (v.mainBody.flightGlobalsIndex == 0)
 				return 0;
-			}
 
 			var body_vessel = v.mainBody.position - Lib.VesselPosition(v);
 			var body_sun = v.mainBody.position - FlightGlobals.Bodies[0].position;
-
-			return Vector3d.Angle(body_vessel, body_sun);
+			double angle_rad = Vector3d.Angle(body_vessel, body_sun);
+			return angle_rad * 180.0 / Math.PI;
 		}
+
 
 		// --- VESSEL ---------------------------------------------------------------
 
@@ -871,6 +973,7 @@ namespace KERBALISM
 			if (v.loaded) return v.Landed || v.Splashed;
 			else return v.protoVessel.landed || v.protoVessel.splashed;
 		}
+
 
 		// return vessel position
 		public static Vector3d VesselPosition(Vessel v)
@@ -1016,6 +1119,14 @@ namespace KERBALISM
 			return a.precisePosition == b.precisePosition;
 		}
 
+		public static string GetBiome(Vessel vessel, bool allowKSCBiomes = true)
+		{
+			if (allowKSCBiomes && vessel.landedAt != string.Empty)
+				return Vessel.GetLandedAtString(vessel.landedAt);
+			else
+				return ScienceUtil.GetExperimentBiome(vessel.mainBody, vessel.latitude, vessel.longitude);
+		}
+
 		// --- PART -----------------------------------------------------------------
 
 		// get list of parts recursively, useful from the editors
@@ -1116,21 +1227,21 @@ namespace KERBALISM
 
 		public static bool HasPart(Vessel v, string part_name)
 		{
-			if (Cache.HasVesselObjectsCache(v, "has_part:" + part_name))
-				return Cache.VesselObjectsCache<bool>(v, "has_part:" + part_name);
+			string ret = Cache.VesselObjectsCache<string>(v, "has_part:" + part_name);
+			if (!string.IsNullOrEmpty(ret))
+				return bool.Parse(ret);
 
-			bool ret = false;
-			foreach(string name in Tokenize(part_name, ','))
+			if(v.loaded)
 			{
-				if (v.loaded)
-					ret = v.parts.Find(k => k.name.StartsWith(part_name, StringComparison.Ordinal)) != null;
-				else
-					ret = v.protoVessel.protoPartSnapshots.Find(k => k.partName.StartsWith(part_name, StringComparison.Ordinal)) != null;
-				if (ret) break;
+				ret = (v.parts.Find(k => k.partName == part_name) != null).ToString();
+			}
+			else
+			{
+				ret = (v.protoVessel.protoPartSnapshots.Find(k => k.partName == part_name) != null).ToString();
 			}
 
 			Cache.SetVesselObjectsCache(v, "has_part:" + part_name, ret);
-			return ret;
+			return bool.Parse(ret);
 		}
 
 		/// <summary>
@@ -1563,8 +1674,8 @@ namespace KERBALISM
 			// our own science system
 			else
 			{
-				foreach (var drive in Drive.GetDrives(v, true))
-					if (drive.files.Count > 0) return true;
+				foreach (var drive in Drive.GetDrives(v))
+					if (drive.Count > 0) return true;
 				return false;
 			}
 		}
@@ -1610,21 +1721,12 @@ namespace KERBALISM
 			else
 			{
 				// select a file at random and remove it
-				foreach (var drive in Drive.GetDrives(v, true))
+				foreach (var drive in Drive.GetDrives(v))
 				{
-					if (drive.files.Count > 0) //< it should always be the case
+					if (drive.Count > 0) //< it should always be the case
 					{
-						string filename = string.Empty;
-						int i = Lib.RandomInt(drive.files.Count);
-						foreach (var pair in drive.files)
-						{
-							if (i-- == 0)
-							{
-								filename = pair.Key;
-								break;
-							}
-						}
-						drive.files.Remove(filename);
+						int i = Lib.RandomInt(drive.Count);
+						drive[i].Delete();
 						break;
 					}
 				}

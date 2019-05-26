@@ -6,8 +6,8 @@ using KSP.Localization;
 
 namespace KERBALISM
 {
-
-
+	//TODO : LAB DEVICE
+	/*
 	public sealed class LaboratoryDevice : Device
 	{
 		public LaboratoryDevice(Laboratory lab)
@@ -80,7 +80,7 @@ namespace KERBALISM
 		private readonly ProtoPartModuleSnapshot lab;
 		private readonly uint part_id;
 	}
-
+	*/
 
 } // KERBALISM
 
