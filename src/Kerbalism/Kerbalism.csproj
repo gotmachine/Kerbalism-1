@@ -293,7 +293,7 @@
       <Output TaskParameter="Assemblies" ItemName="Targets" />
     </GetAssemblyIdentity>
     <ItemGroup>
-      <VersionNumber Include="@(Targets-&gt;'%(Version)')" />
+      <VersionNumber Include="@(Targets->'%(Version)')" />
     </ItemGroup>
   </Target>
   <PropertyGroup>
@@ -303,6 +303,13 @@
   </PostBuildEventDependsOn>
     <PostBuildEvent Condition="'$(OS)' == 'Windows_NT'">if "$(ConfigurationName)"=="Debug" (call "$(ProjectDir)..\..\buildscripts\UnityDebug\prepare-debug.bat" $(TargetName) 16)
 if "$(ConfigurationName)"=="Release" (call "$(ProjectDir)..\..\buildscripts\ZipPack\build-package.bat" $(TargetName) -v@(VersionNumber) 16)
+echo Copying local repository Localization files to $(TargetDir)Localization
+xcopy /E /D /Y "$(ProjectDir)..\..\GameData\Kerbalism\Localization" "$(TargetDir)\Localization\"
+</PostBuildEvent>
+  </PropertyGroup>
+  <PropertyGroup>
+    <PostBuildEvent>if "$(ConfigurationName)"=="Debug" (call "$(ProjectDir)..\..\buildscripts\UnityDebug\prepare-debug.bat" $(TargetName) 17)
+if "$(ConfigurationName)"=="Release" (call "$(ProjectDir)..\..\buildscripts\ZipPack\build-package.bat" $(TargetName) -v@(VersionNumber) 17)
 echo Copying local repository Localization files to $(TargetDir)Localization
 xcopy /E /D /Y "$(ProjectDir)..\..\GameData\Kerbalism\Localization" "$(TargetDir)\Localization\"
 </PostBuildEvent>

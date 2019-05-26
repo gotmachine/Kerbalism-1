@@ -26,8 +26,6 @@ namespace KERBALISM
 		[KSPField] public string crew_prepare = string.Empty; // prepare crew. if set, experiment will require crew to set up before it can start recording 
 		[KSPField] public string resources = string.Empty;    // resources consumed by this experiment
 		[KSPField] public bool hide_when_unavailable = false; // don't show UI when the experiment is unavailable
-		[KSPField] public string ground_transform = string.Empty; // the transform to be checked for ground contact
-		[KSPField] public double ground_distance = 5.0;       // tolerable distance between ground_transform and the ground (length of the extendible part)
 
 		// animations
 		[KSPField] public string anim_deploy = string.Empty; // deploy animation
@@ -46,7 +44,6 @@ namespace KERBALISM
 		[KSPField(isPersistant = true)] public bool shrouded = false;
 		[KSPField(isPersistant = true)] public double remainingSampleMass = 0;
 		[KSPField(isPersistant = true)] public bool broken = false;
-		[KSPField(isPersistant = true)] public bool noGroundContact = false;
 		[KSPField(isPersistant = true)] public double scienceValue = 0;
 		[KSPField(isPersistant = true)] public bool forcedRun = false;
 		[KSPField(isPersistant = true)] public uint privateHdId = 0;
@@ -57,8 +54,6 @@ namespace KERBALISM
 		// animations
 		internal Animator deployAnimator;
 		internal Animator loopAnimator;
-		// the ground contact transform
-		Transform groundTransform;
 
 		private CrewSpecs operator_cs;
 		private CrewSpecs reset_cs;
@@ -128,11 +123,8 @@ namespace KERBALISM
 			loopAnimator.Still(recording ? 1.0 : 0.0);
 			if (recording) loopAnimator.Play(false, true);
 
-			// get experiment head transform only once
-			if (ground_transform.Length > 0) groundTransform = part.FindModelTransform(ground_transform);
-
 			// parse crew specs
-			if (!string.IsNullOrEmpty(crew_operate))
+			if(!string.IsNullOrEmpty(crew_operate))
 				operator_cs = new CrewSpecs(crew_operate);
 			if (!string.IsNullOrEmpty(crew_reset))
 				reset_cs = new CrewSpecs(crew_reset);
@@ -232,13 +224,8 @@ namespace KERBALISM
 			// get ec handler
 			Resource_info ec = ResourceCache.Info(vessel, "ElectricCharge");
 			shrouded = part.ShieldedFromAirstream;
-
-			// check distance to ground if the transform exists
-			if (groundTransform == null) noGroundContact = false;
-			else noGroundContact = Lib.TerrainHeight(vessel.mainBody, groundTransform.position) > ground_distance;
-
 			issue = TestForIssues(vessel, ec, this, privateHdId, broken,
-				remainingSampleMass, didPrepare, shrouded, noGroundContact, last_subject_id);
+				remainingSampleMass, didPrepare, shrouded, last_subject_id);
 
 			if (string.IsNullOrEmpty(issue))
 				issue = TestForResources(vessel, resourceDefs, Kerbalism.elapsed_s, ResourceCache.Get(vessel));
@@ -390,13 +377,12 @@ namespace KERBALISM
 			string last_subject_id = Lib.Proto.GetString(m, "last_subject_id", "");
 			double remainingSampleMass = Lib.Proto.GetDouble(m, "remainingSampleMass", 0);
 			bool broken = Lib.Proto.GetBool(m, "broken", false);
-			bool noGroundContact = Lib.Proto.GetBool(m, "noGroundContact", false);
 			bool forcedRun = Lib.Proto.GetBool(m, "forcedRun", false);
 			bool recording = Lib.Proto.GetBool(m, "recording", false);
 			uint privateHdId = Lib.Proto.GetUInt(m, "privateHdId", 0);
 
 			string issue = TestForIssues(v, ec, experiment, privateHdId, broken,
-				remainingSampleMass, didPrepare, shrouded, noGroundContact, last_subject_id);
+				remainingSampleMass, didPrepare, shrouded, last_subject_id);
 			if(string.IsNullOrEmpty(issue))
 				issue = TestForResources(v, KerbalismProcess.ParseResources(experiment.resources), elapsed_s, resources);
 
@@ -488,7 +474,7 @@ namespace KERBALISM
 		}
 
 		private static string TestForIssues(Vessel v, Resource_info ec, Experiment experiment, uint hdId, bool broken,
-			double remainingSampleMass, bool didPrepare, bool isShrouded, bool noGroundContact, string last_subject_id)
+			double remainingSampleMass, bool didPrepare, bool isShrouded, string last_subject_id)
 		{
 			var subject_id = Science.Generate_subject_id(experiment.experiment_id, v);
 
@@ -517,9 +503,6 @@ namespace KERBALISM
 
 			if (!didPrepare && !string.IsNullOrEmpty(experiment.crew_prepare))
 				return "not prepared";
-
-			if (noGroundContact)
-				return "no ground contact";
 
 			string situationIssue = Science.TestRequirements(experiment.experiment_id, experiment.requires, v);
 			if (situationIssue.Length > 0)

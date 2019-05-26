@@ -143,10 +143,6 @@ Hooks experiments into the Kerbalism science system.
 +-----------------------+-------------------------------------------------------------+---------------+
 | anim_deploy           | Name of the part animation to trigger when recording starts.|               |
 +-----------------------+-------------------------------------------------------------+---------------+
-| ground_transform      | Name of the transform used to check ground contact          |               |
-+-----------------------+-------------------------------------------------------------+---------------+
-| ground_distance       | Tolerable distance between ground_transform and the ground  |               |
-+-----------------------+-------------------------------------------------------------+---------------+
 
 **Crew** specifications (used in crew_operate, crew_reset or crew_prepare as well as in some
 other Kerbalism mods) have to be given according to `true|trait|[trait]@level`
