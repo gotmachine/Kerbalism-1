@@ -20,8 +20,9 @@ namespace KERBALISM
 		// persistence
 		public string processId;
 		public bool enabled; // must be synchronized with the PM enabled / moduleIsEnabled state, used for malfunctions
-		public uint privateHdId; // id of the only drive the process must use for its results, set to 0 to allow any drive
-		public bool isConverter;
+		public uint privateHdId = 0; // id of the only drive the process must use for its results, set to 0 to allow any drive
+		public bool isConverter = false;
+		public bool running = false;
 
 		public Result result; // the current result this process is generating data for
 		public Result convertedResult; // if this is a converter, the result being converted
@@ -29,6 +30,7 @@ namespace KERBALISM
 
 		protected long dataPending;
 		public long existingData;
+		public List<string> issues;
 
 		// TODO : the subject should be a field implemented in here in the base class
 		/// <summary> the Subject that this process is generating </summary>
@@ -72,6 +74,7 @@ namespace KERBALISM
 					process.processId = processId;
 					process.enabled = partModule.enabled && partModule.moduleIsEnabled;
 					process.isConverter = isConverter;
+					process.issues = new List<string>();
 
 					// find the private hd
 					HardDrive hd = partModule.part.FindModuleImplementing<HardDrive>();
@@ -116,6 +119,7 @@ namespace KERBALISM
 			process.processId = Lib.ConfigValue(node, "processId", "invalid");
 			process.enabled = Lib.ConfigValue(node, "enabled", true);
 			process.privateHdId = Lib.ConfigValue(node, "privateHdId", 0u);
+			process.running = Lib.ConfigValue(node, "running", false);
 			switch (Lib.ConfigValue(node, "type", "invalid"))
 			{
 				case nameof(FileType.File): process.type = FileType.File; break;
@@ -132,6 +136,7 @@ namespace KERBALISM
 			node.AddValue("processId", processId);
 			node.AddValue("enabled", enabled);
 			node.AddValue("privateHdId", privateHdId);
+			node.AddValue("running", running);
 
 			OnSave(node);
 		}
@@ -183,7 +188,7 @@ namespace KERBALISM
 		public abstract ExperimentInfo GetExperimentInfo();
 
 		/// <summary> process specific deserialization </summary>
-		public bool Update(Vessel vessel, double elapsed_s)
+		public bool PreUpdate(Vessel vessel, double elapsed_s)
 		{
 			// clear deleted results reference
 			if (result != null && result.IsDeleted()) result = null;
@@ -218,20 +223,21 @@ namespace KERBALISM
 			if (Subject == null || Subject.HasChanged(vessel))
 			{
 				Subject = Subject.GetCurrentSubject(GetExperimentInfo(), vessel);
-				subjectHasChanged = true;
-				if (Subject.isValid)
-				{
-					result = Drive.FindPartialResult(vessel, Subject.SubjectId, type, privateHdId, out existingData);
-				}
-				else
-				{
-					result = null;
-					existingData = 0;
-				}
+				result = null;
+				existingData = 0;
+			}
+			// TODO : partial subject finding should go in Science.Update() so we only do it if needed
+			if (result == null && Subject != null && Subject.isValid)
+			{
+				result = Drive.FindPartialResult(vessel, Subject.SubjectId, type, privateHdId, out existingData);
 			}
 
 			// non-converters only get processed if their subject is valid
-			return CanRun(vessel, elapsed_s, subjectHasChanged) && Subject.isValid;
+			if (!Subject.isValid)
+				return false;
+
+			issues.Clear();
+			return CanRun(vessel, elapsed_s, subjectHasChanged);
 		}
 
 		/// <summary>
@@ -248,13 +254,9 @@ namespace KERBALISM
 		public abstract long GetDataPending(Vessel vessel, double elapsed_s, long dataToConvert = 0);
 
 		/// <summary>
-		/// using dataProcessed, consume resources and do process-specific things :
-		///	experiment : remove sample mass, labs : remove size from converted sample...
+		/// using dataProcessed, consume resources and do process-specific things like removing sample mass
 		/// </summary>
-		public abstract void Process(Vessel vessel, double elapsed_s, long dataProcessed);
-
-		
-		
+		public abstract void PostUpdate(Vessel vessel, double elapsed_s, long dataProcessed);
 
 		/// <summary>
 		/// If no result exists, create a new (empty) result for the process.

@@ -35,7 +35,7 @@ namespace KERBALISM
 		/// <summary>sample capacity in bits, -1 -> infinite</summary>
 		public long sampleCapacity;
 		public bool isPrivate = false;
-		public string partName;
+		public string partName = string.Empty;
 
 		private List<Result> results = new List<Result>();
 
@@ -52,13 +52,14 @@ namespace KERBALISM
 
 		public Drive(ConfigNode node, string version, uint partId)
 		{
+			partName = Lib.ConfigValue(node, "partName", string.Empty);
 			isPrivate = Lib.ConfigValue(node, "is_private", false);
 			sampleCapacity = Lib.ConfigValue(node, "sampleCapacity", -1L);
 			fileCapacity = Lib.ConfigValue(node, "fileCapacity", -1L);
 			this.partId = partId;
 
 			// load results
-			foreach (var resNode in node.GetNodes())
+			foreach (var resNode in node.GetNodes("result"))
 			{
 				new Result(this, resNode);
 			}
@@ -103,6 +104,7 @@ namespace KERBALISM
 
 		public void Save(ConfigNode node)
 		{
+			node.AddValue("partName", partName);
 			node.AddValue("is_private", isPrivate);
 			node.AddValue("sampleCapacity", sampleCapacity);
 			node.AddValue("fileCapacity", fileCapacity);
@@ -341,7 +343,7 @@ namespace KERBALISM
 		public List<Result> GetResultsToTransfer(Vessel vessel)
 		{
 			int crewCount = Lib.CrewCount(vessel);
-			return results.FindAll(p => p.IsTransferrable(crewCount));
+			return results.FindAll(p => p.transfer && p.CanTransfer(crewCount));
 		}
 
 		/// <summary>From this drive, get the size of the results marked for transfer and that can be transferred</summary>
@@ -351,18 +353,14 @@ namespace KERBALISM
 
 			for (int i = 0; i < results.Count; i++)
 			{
-				switch (results[i].type)
+				if (results[i].transfer && results[i].CanTransfer(crewCount))
 				{
-					case FileType.File:
-						if (results[i].IsTransferrable(crewCount))
-							transferFileSize += results[i].Size;
-						break;
-					case FileType.Sample:
-						if (results[i].IsTransferrable(crewCount))
-							transferSampleSize += results[i].Size;
-						break;
-					default:
-						break;
+					switch (results[i].type)
+					{
+						case FileType.File: transferFileSize += results[i].Size; break;
+						case FileType.Sample: transferSampleSize += results[i].Size; break;
+						default: break;
+					}
 				}
 			}
 		}
@@ -503,7 +501,7 @@ namespace KERBALISM
 		/// <summary>From the vessel drives, return all results marked for transfer and that can be transferred</summary>
 		public static List<Result> GetAllResultsToTransfer(Vessel vessel)
 		{
-			return GetResults(vessel, p => p.IsTransferrable(vessel));
+			return GetResults(vessel, p => p.transfer && p.CanTransfer(vessel));
 		}
 
 		// Note : there is not garanty that the result order will stay the same between calls to this method.

@@ -168,7 +168,7 @@ namespace KERBALISM
 		public bool requireAtmosphere;
 
 		// internal values :
-		public long dataScale;          // = fullSize / scienceValue. Same as stock but the unit is in bit/point instead of MB/point
+		public double dataScale;          // = fullSize / scienceValue. Same as stock but the unit is in bit/point instead of MB/point
 		public readonly double massPerBit;
 		public ScienceExperiment stockDefinition;
 
@@ -182,12 +182,12 @@ namespace KERBALISM
 			allowMiniBiomes = Lib.ConfigValue(node, "allowMiniBiomes", true);
 			requiredExperimentLevel = Lib.ConfigValue(node, "requiredExperimentLevel", 0f);
 			requireAtmosphere = Lib.ConfigValue(node, "requireAtmosphere", false);
-			sampleMass = Lib.ConfigValue(node, "sampleMass", 1.0);
+			sampleMass = Lib.ConfigValue(node, "sampleMass", 0.0);
 
 			// set mass/data ratio of samples
 			massPerBit = sampleMass / fullSize;
 			// determince dataScale
-			dataScale = (long)(fullSize / scienceValue);
+			dataScale = fullSize / scienceValue;
 
 			// parse situation/biome bitmasks
 			situationMask = 0;
@@ -264,35 +264,34 @@ namespace KERBALISM
 			}
 		}
 
-		public List<string> Situations()
+		public List<string> AvailableSituations()
 		{
 			List<string> result = new List<string>();
+			string availableSit = string.Empty;
 
-			string s;
+			foreach (KerbalismSituation situation in (KerbalismSituation[])Enum.GetValues(typeof(KerbalismSituation)))
+			{
+				if (situation == KerbalismSituation.None)
+					continue;
 
-			s = MaskToString(KerbalismSituation.SrfLanded, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
-			s = MaskToString(KerbalismSituation.SrfSplashed, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
-			s = MaskToString(KerbalismSituation.FlyingLow, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
-			s = MaskToString(KerbalismSituation.FlyingHigh, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
-			s = MaskToString(KerbalismSituation.InSpaceLow, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
-			s = MaskToString(KerbalismSituation.InSpaceHigh, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
+				availableSit = MaskToString(situation);
 
-			s = MaskToString(KerbalismSituation.InnerBelt, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
-			s = MaskToString(KerbalismSituation.OuterBelt, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
-			s = MaskToString(KerbalismSituation.Magnetosphere, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
-			s = MaskToString(KerbalismSituation.Reentry, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
-			s = MaskToString(KerbalismSituation.Interstellar, situationMask, biomeMask); if (!string.IsNullOrEmpty(s)) result.Add(s);
+				if (availableSit != string.Empty)
+					result.Add(availableSit);
+			}
 
 			return result;
 		}
 
-		private static string MaskToString(KerbalismSituation sit, uint situationMask, uint biomeMask)
+		public string MaskToString(KerbalismSituation sit)
 		{
-			string result = string.Empty;
-			if (((int)sit & situationMask) == 0) return result;
-			result = Lib.SpacesOnCaps(sit.ToString().Replace("Srf", ""));
-			if (((int)sit & biomeMask) != 0) result += " (Biomes)";
-			return result;
+			if (((uint)sit & situationMask) == 0)
+				return string.Empty;
+
+			if (((uint)sit & biomeMask) == 0)
+				return SituationString(sit);
+			else
+				return Lib.BuildString(SituationString(sit), " (Biomes)");
 		}
 
 		/// <summary>
@@ -305,44 +304,46 @@ namespace KERBALISM
 			switch (vessel.situation)
 			{
 				case Vessel.Situations.SPLASHED:
-					return KerbalismSituation.SrfSplashed;
+					return IsAvailable(KerbalismSituation.SrfSplashed, vessel.mainBody) ? KerbalismSituation.SrfSplashed : KerbalismSituation.None;
 				case Vessel.Situations.PRELAUNCH:
 				case Vessel.Situations.LANDED:
-					return KerbalismSituation.SrfLanded;
+					return IsAvailable(KerbalismSituation.SrfLanded, vessel.mainBody) ? KerbalismSituation.SrfLanded : KerbalismSituation.None;
 			}
 
 			if (vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth)
 			{
 				if (vessel.altitude < vessel.mainBody.scienceValues.flyingAltitudeThreshold)
 				{
-					return KerbalismSituation.FlyingLow;
+					return IsAvailable(KerbalismSituation.FlyingLow, vessel.mainBody) ? KerbalismSituation.FlyingLow : KerbalismSituation.None;
 				}
 				// note : checking vessel.mach > ~8-10 may be more accurate than using srfSpeed
-				else if (vessel.loaded
+				else if (IsAvailable(KerbalismSituation.Reentry, vessel.mainBody)
+					&& vessel.loaded
 					&& vessel.orbit.ApA > vessel.mainBody.atmosphereDepth
 					&& vessel.verticalSpeed < -50.0
 					&& vessel.srfSpeed > 1984)
 				{
 					return KerbalismSituation.Reentry;
 				}
-				return KerbalismSituation.FlyingHigh;
+
+				return IsAvailable(KerbalismSituation.FlyingHigh, vessel.mainBody) ? KerbalismSituation.FlyingHigh : KerbalismSituation.None;
 			}
 
 			var vi = Cache.VesselInfo(vessel);
 
 			// the radiation related situations will override spaceHigh and space low
 			// we also assume that magnetosphere will override the belts
-			if (vi.magnetosphere) return KerbalismSituation.Magnetosphere;
-			if (vi.inner_belt) return KerbalismSituation.InnerBelt;
-			if (vi.outer_belt) return KerbalismSituation.OuterBelt;
+			if (IsAvailable(KerbalismSituation.Magnetosphere, vessel.mainBody) && vi.magnetosphere) return KerbalismSituation.Magnetosphere;
+			if (IsAvailable(KerbalismSituation.InnerBelt, vessel.mainBody) && vi.inner_belt) return KerbalismSituation.InnerBelt;
+			if (IsAvailable(KerbalismSituation.OuterBelt, vessel.mainBody) && vi.outer_belt) return KerbalismSituation.OuterBelt;
 
 			if (vessel.altitude < vessel.mainBody.scienceValues.spaceAltitudeThreshold)
-				return KerbalismSituation.InSpaceLow;
+				return IsAvailable(KerbalismSituation.InSpaceLow, vessel.mainBody) ? KerbalismSituation.InSpaceLow : KerbalismSituation.None;
 
 			// interstellar should only override space high ?
-			if (vi.interstellar) return KerbalismSituation.Interstellar;
+			if (IsAvailable(KerbalismSituation.Interstellar, vessel.mainBody) && vi.interstellar) return KerbalismSituation.Interstellar;
 
-			return KerbalismSituation.InSpaceHigh;
+			return IsAvailable(KerbalismSituation.InSpaceHigh, vessel.mainBody) ? KerbalismSituation.InSpaceHigh : KerbalismSituation.None;
 		}
 
 		public override string ToString()
@@ -354,7 +355,7 @@ namespace KERBALISM
 		{
 			if (requireAtmosphere)
 			{
-				return body.atmosphere && ((int)situationMask & (int)situation) != 0;
+				return body.atmosphere && (situationMask & (int)situation) != 0;
 			}
 			return ((int)situationMask & (int)situation) != 0;
 		}
@@ -363,7 +364,6 @@ namespace KERBALISM
 		{
 			return ((int)biomeMask & (int)situation) != 0;
 		}
-
 
 		public static float BodyScienceValue(CelestialBody body, KerbalismSituation situation)
 		{
@@ -395,19 +395,77 @@ namespace KERBALISM
 		{
 			switch (situation)
 			{
-				case KerbalismSituation.SrfLanded: return "landed";
-				case KerbalismSituation.SrfSplashed: return "splashed";
-				case KerbalismSituation.FlyingLow: return "flying low";
-				case KerbalismSituation.FlyingHigh: return "flying high";
-				case KerbalismSituation.InSpaceLow: return "in space low";
-				case KerbalismSituation.InSpaceHigh: return "in space high";
-				case KerbalismSituation.InnerBelt: return "in inner belt";
-				case KerbalismSituation.OuterBelt: return "in outer belt";
-				case KerbalismSituation.Reentry: return "reentrying";
-				case KerbalismSituation.Magnetosphere: return "in magnetopause";
-				case KerbalismSituation.Interstellar: return "in interstellar space";
+				case KerbalismSituation.SrfLanded: return "Landed";
+				case KerbalismSituation.SrfSplashed: return "Splashed";
+				case KerbalismSituation.FlyingLow: return "Flying low";
+				case KerbalismSituation.FlyingHigh: return "Flying high";
+				case KerbalismSituation.InSpaceLow: return "Space low";
+				case KerbalismSituation.InSpaceHigh: return "Space high";
+				case KerbalismSituation.InnerBelt: return "Inner belt";
+				case KerbalismSituation.OuterBelt: return "Outer belt";
+				case KerbalismSituation.Reentry: return "Reentry";
+				case KerbalismSituation.Magnetosphere: return "Magnetopause";
+				case KerbalismSituation.Interstellar: return "Interstellar";
 				default: return string.Empty;
 			}
+		}
+
+		public List<Subject> GetSubjects(CelestialBody body = null, KerbalismSituation situation = KerbalismSituation.None)
+		{
+			List<Subject> subjects = new List<Subject>();
+			BodySubjects[] bodySubjects = null;
+			if (body == null)
+			{
+				bodySubjects = allSubjects;
+			}	
+			else
+			{
+				foreach (BodySubjects bodySubs in allSubjects)
+				{
+					if (bodySubs.Body == body)
+					{
+						bodySubjects = new BodySubjects[] { bodySubs };
+						break;
+					}
+				}
+			}
+
+			if (bodySubjects == null) return subjects;
+
+			foreach (BodySubjects bodySub in bodySubjects)
+			{
+				foreach (SituationSubjects sitSubjects in bodySub.Situations)
+				{
+					if (situation == KerbalismSituation.None)
+					{
+						subjects.AddRange(sitSubjects.Subjects);
+					}
+					else if (sitSubjects.situation == situation)
+					{
+						subjects.AddRange(sitSubjects.Subjects);
+						return subjects;
+					}
+				}
+			}
+
+			return subjects;
+		}
+
+		public BodySubjects[] allSubjects;
+
+		public class BodySubjects
+		{
+			public CelestialBody Body { get; private set; }
+			public SituationSubjects[] Situations { get; private set; }
+			public double TotalScienceValue { get; private set; }
+		}
+
+		public class SituationSubjects
+		{
+			public KerbalismSituation situation { get; private set; }
+			public Subject[] Subjects { get; private set; }
+			public bool UseBiomes { get; private set; }
+			public double TotalScienceValue { get; private set; }
 		}
 	}
 }

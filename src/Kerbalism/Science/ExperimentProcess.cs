@@ -24,20 +24,11 @@ namespace KERBALISM
 		}
 
 		// persistence
-		public bool recording;
 		public bool forcedRun;
-		public bool smartMode;
 		public bool didPrepare;
 		public bool needReset;
 		public bool shrouded;
-		private long sampleAmount;
-		private long dataSampled; // TODO : dataSampled should go in the base class
-
-		// UI
-		private bool hasIssue;
-		private string situationIssue;
-		private string processIssue;
-		private List<string> requireIssues;
+		private long sampleAmount = 0;
 
 		// current simstep caching
 		private double resourceScale;
@@ -51,10 +42,11 @@ namespace KERBALISM
 			Experiment expModule = (Experiment)partModule;
 
 			expVar = Science.GetExperimentVariant(expModule.variantId);
-			recording = expModule.editorRecording;
-			forcedRun = expModule.editorForcedRun;
+			if (expVar == null) return;
+
+			running = false;
+			forcedRun = false;
 			didPrepare = false;
-			smartMode = true;
 			needReset = false;
 			shrouded = expModule.part.ShieldedFromAirstream;
 			sampleAmount = expVar.sampleAmount * expVar.expInfo.fullSize;
@@ -66,34 +58,28 @@ namespace KERBALISM
 
 		public override void OnLoad(ConfigNode node)
 		{
-			recording = Lib.ConfigValue(node, "recording", false);
 			forcedRun = Lib.ConfigValue(node, "recording", false);
-			smartMode = Lib.ConfigValue(node, "smartMode", true);
 			didPrepare = Lib.ConfigValue(node, "didPrepare", false);
 			needReset = Lib.ConfigValue(node, "needReset", false);
 			shrouded = Lib.ConfigValue(node, "shrouded", false);
 			sampleAmount = Lib.ConfigValue(node, "sampleAmount", 0L);
-			dataSampled = Lib.ConfigValue(node, "dataSampled", 0L);
 		}
 
 		public override void OnSave(ConfigNode node)
 		{
-			node.AddValue("recording", recording);
 			node.AddValue("forcedRun", forcedRun);
-			node.AddValue("smartMode", smartMode);
 			node.AddValue("didPrepare", didPrepare);
 			node.AddValue("needReset", needReset);
 			node.AddValue("shrouded", shrouded);
 			node.AddValue("sampleAmount", sampleAmount);
-			node.AddValue("dataSampled", dataSampled);
 		}
 
 		public State GetState()
 		{
-			if (hasIssue) return State.ISSUE;
-			if (!recording) return State.STOPPED;
+			if (issues.Count > 0) return State.ISSUE;
+			if (!running) return State.STOPPED;
 			if (forcedRun) return State.FORCED_RUN;
-			if (scienceValue < double.Epsilon && smartMode) return State.SMART_WAIT;
+			if (scienceValue < double.Epsilon) return State.SMART_WAIT;
 			return State.SMART_RUN;
 		}
 
@@ -102,30 +88,61 @@ namespace KERBALISM
 			return expVar.expInfo;
 		}
 
+		// TODO optimisation : only test all conditions if the module PAW or the device UI need it
+		// this can probably be done by tracking the onPartActionUICreate / onPartActionUIDismiss events for PAW UI
+		// and we can manage that internally for the devices
 		public override bool CanRun(Vessel vessel, double elapsed_s, bool subjectHasChanged)
 		{
-			if (subjectHasChanged)
-				forcedRun = false;
 
+			if (!enabled)
+				issues.Add("broken");
 
-			// TODO optimisation : only test all conditions if the module PAW or the device UI need it
-			// this can probably be done using the onPartActionUICreate / onPartActionUIDismiss events for PAW UI
-			// and we can manage that easily for the devices
+			if (shrouded && !expVar.allowShrouded)
+				issues.Add("shrouded");
 
-			// test for non-situation dependant issues
-			processIssue = TestForIssues(vessel, elapsed_s);
+			if (needReset)
+				issues.Add("reset required");
+
+			resourceScale = 1.0;
+
+			if (expVar.ecRate > 0)
+			{
+				Resource_info ec = ResourceCache.Info(vessel, "ElectricCharge");
+				if (ec.amount < double.Epsilon)
+					issues.Add("no Electricity");
+
+				resourceScale = Math.Min(ec.amount / (expVar.ecRate * elapsed_s), 1.0);
+			}
+
+			for (int i = 0; i < expVar.res_parsed.Length; i++)
+			{
+				Resource_info ri = ResourceCache.Info(vessel, expVar.res_parsed[i].key);
+				if (ri.amount < double.Epsilon)
+					issues.Add(Lib.BuildString("missing ", ri.resource_name));
+
+				resourceScale = Math.Min(resourceScale, Math.Min(ri.amount / (expVar.res_parsed[i].value * elapsed_s), 1.0));
+			}
+
+			if (!string.IsNullOrEmpty(expVar.crewOperate))
+			{
+				var cs = new CrewSpecs(expVar.crewOperate);
+				if (!cs && Lib.CrewCount(vessel) > 0)
+					issues.Add("crew on board");
+				else if (cs && !cs.Check(vessel))
+					issues.Add(cs.Warning());
+			}
+
+			if (type == FileType.Sample && !expVar.sampleCollecting && sampleAmount <= 0)
+				issues.Add("depleted");
+
+			if (!didPrepare && !string.IsNullOrEmpty(expVar.crewPrepare))
+				issues.Add("not prepared");
 
 			// test for requirements issues
-			requireIssues = expVar.TestRequirements(vessel);
+			issues.AddRange(expVar.TestRequirements(vessel));
 
-			// get subject and result
-			// TODO : this should go in the abstract base class
-			// but to do it wo need to put subject.isValid and subject.HasChanged in the base abstract Subject class
-
-
-			// note : available space on drives will be checked after we know what has been transmitted
-			if (!Subject.isValid || requireIssues.Count > 0 || !string.IsNullOrEmpty(processIssue))
-				hasIssue = true;
+			if (subjectHasChanged)
+				forcedRun = false;
 
 			// check for science value
 			// TODO : do not use science value, use data amount
@@ -146,26 +163,25 @@ namespace KERBALISM
 
 				// clamp to what is actually needed
 				if (forcedRun)
-					dataPending = Math.Min(dataPending, expVar.expInfo.fullSize - (dataSampled % expVar.expInfo.fullSize));
+				{
+					long sizeRemaining = expVar.expInfo.fullSize - (existingData % expVar.expInfo.fullSize);
+					if (sizeRemaining < dataPending)
+					{
+						dataPending = sizeRemaining;
+						running = false;
+					}
+				}
 				else
+				{
 					dataPending = Math.Min(dataPending, Subject.DataRemainingTotal());
+				}	
 			}
 			else
 			{
 				dataPending = 0;
 			}
 
-			if (dataPending == 0)
-			{
-				if (state == State.FORCED_RUN)
-				{
-					forcedRun = false;
-					recording = false;
-				}
-				return false;
-			}
-
-			return true;
+			return dataPending > 0;
 		}
 
 		public override long GetDataPending(Vessel vessel, double elapsed_s, long dataToConvert = 0)
@@ -173,17 +189,10 @@ namespace KERBALISM
 			return dataPending;
 		}
 
-		public override void Process(Vessel vessel, double elapsed_s, long dataProcessed)
+		public override void PostUpdate(Vessel vessel, double elapsed_s, long dataProcessed)
 		{
-			// if we are here but no data has been processed, it can only be because drives are full
-			if (dataProcessed == 0)
-			{
-				processIssue = "storage full";
+			if (dataProcessed <= 0)
 				return;
-			}
-
-			// keep track of how much data this experiment has produced
-			dataSampled += dataProcessed;
 
 			// remove stored sample amount
 			if (type == FileType.Sample)
@@ -210,12 +219,23 @@ namespace KERBALISM
 			}
 		}
 
+		public long GetDataDone()
+		{
+			return existingData % expVar.expInfo.fullSize;
+		}
+
 		public double GetPercentDone()
 		{
-			if (smartMode)
-				return 1.0 - (Subject.ScienceValueRemainingTotal() / Subject.ScienceValueGame());
+			if (forcedRun)
+				return (double)GetDataDone() / expVar.expInfo.fullSize;
 			else
-				return (dataSampled % expVar.expInfo.fullSize) / expVar.expInfo.fullSize;
+				return 1.0 - (Subject.ScienceValueRemainingTotal() / Subject.ScienceValueGame());
+
+		}
+
+		public double GetETA()
+		{
+				return expVar.duration - (GetPercentDone() * expVar.duration);
 		}
 
 		public double GetSampleMass()
@@ -245,54 +265,5 @@ namespace KERBALISM
 		// - GOOD : correctly scaled resource consumption / data output in all cases
 		// - BAD : data output rate clamping at high timewarp speeds, but the experiement will still run, albeit at a reduced rate
 		// - MEH : evaluation will be done every 1 or 2 steps, never more.
-
-		private string TestForIssues(Vessel v, double elapsed_s)
-		{
-			if (!enabled)
-				return "broken";
-
-			if (shrouded && !expVar.allowShrouded)
-				return "shrouded";
-
-			if (needReset)
-				return "reset required";
-
-			resourceScale = 1.0;
-
-			if (expVar.ecRate > 0)
-			{
-				Resource_info ec = ResourceCache.Info(v, "ElectricCharge");
-				if (ec.amount < double.Epsilon)
-					return "no Electricity";
-
-				resourceScale = Math.Min(ec.amount / (expVar.ecRate * elapsed_s), 1.0);
-			}
-
-			for (int i = 0; i < expVar.res_parsed.Length; i++)
-			{	
-				Resource_info ri = ResourceCache.Info(v, expVar.res_parsed[i].key);
-				if (ri.amount < double.Epsilon)
-					return "missing " + ri.resource_name;
-
-				resourceScale = Math.Min(resourceScale, Math.Min(ri.amount / (expVar.res_parsed[i].value * elapsed_s), 1.0));
-			}
-
-			if (!string.IsNullOrEmpty(expVar.crewOperate))
-			{
-				var cs = new CrewSpecs(expVar.crewOperate);
-				if (!cs && Lib.CrewCount(v) > 0)
-					return "crew on board";
-				else if (cs && !cs.Check(v))
-					return cs.Warning();
-			}
-
-			if (type == FileType.Sample && !expVar.sampleCollecting && sampleAmount <= 0)
-				return "depleted";
-
-			if (!didPrepare && !string.IsNullOrEmpty(expVar.crewPrepare))
-				return "not prepared";
-
-			return string.Empty;
-		}
 	}
 }

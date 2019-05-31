@@ -14,7 +14,7 @@ namespace KERBALISM
 
 	public static class Lib
 	{
-		// --- UTILS ----------------------------------------------------------------
+		#region UTILS
 
 		// write a message to the log
 		public static void Log(string msg, params object[] param)
@@ -88,8 +88,9 @@ namespace KERBALISM
 			}
 		}
 
+		#endregion
 
-		// --- MATH -----------------------------------------------------------------
+		#region MATH
 
 		// clamp a value
 		public static int Clamp(int value, int min, int max)
@@ -121,8 +122,9 @@ namespace KERBALISM
 			return a * (1.0 - k) + b * k;
 		}
 
+		#endregion
 
-		// --- RANDOM ---------------------------------------------------------------
+		#region RANDOM
 
 		// store the random number generator
 		static System.Random rng = new System.Random();
@@ -155,8 +157,9 @@ namespace KERBALISM
 			return fast_float_seed * 4.6566129e-010f;
 		}
 
+		#endregion
 
-		// --- HASH -----------------------------------------------------------------
+		#region HASH
 
 		// combine two guid, irregardless of their order (eg: Combine(a,b) == Combine(b,a))
 		public static Guid CombineGuid(Guid a, Guid b)
@@ -198,8 +201,9 @@ namespace KERBALISM
 			return h;
 		}
 
+		#endregion
 
-		// --- TIME -----------------------------------------------------------------
+		#region TIME
 
 		// return hours in a day
 		public static double HoursInDay()
@@ -293,8 +297,9 @@ namespace KERBALISM
 			return ((int)Time.realtimeSinceStartup / seconds) % elements;
 		}
 
+		#endregion
 
-		// --- REFLECTION -----------------------------------------------------------
+		#region REFLECTION
 
 		private static readonly BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
 
@@ -346,8 +351,9 @@ namespace KERBALISM
 			return (T)(m.GetType().GetMethod(call_name).Invoke(m, null));
 		}
 
+		#endregion
 
-		// --- STRING ---------------------------------------------------------------
+		#region STRING
 
 		// return string limited to len, with ... at the end
 		public static string Ellipsis(string s, uint len)
@@ -529,8 +535,9 @@ namespace KERBALISM
 			return sb.ToString();
 		}
 
+		#endregion
 
-		// --- HUMAN READABLE -------------------------------------------------------
+		#region HUMAN READABLE
 
 		///<summary> Pretty-print a resource rate (rate is per second, must be positive) </summary>
 		public static string HumanReadableRate(double rate, string precision = "F3")
@@ -720,9 +727,9 @@ namespace KERBALISM
 			MB *= 8; //< to bytes
 			if (MB < 1024.0) return BuildString(MB.ToString("F0"), " B");
 			MB /= 1024.0;
-			if (MB < 1024.0) return BuildString(MB.ToString("F2"), " kB");
+			if (MB < 1024.0) return BuildString(MB.ToString("F0"), " KB");
 			MB /= 1024.0;
-			if (MB < 1024.0) return BuildString(MB.ToString("F2"), " MB");
+			if (MB < 1024.0) return BuildString(MB.ToString("F1"), " MB");
 			MB /= 1024.0;
 			if (MB < 1024.0) return BuildString(MB.ToString("F2"), " GB");
 			MB /= 1024.0;
@@ -730,7 +737,7 @@ namespace KERBALISM
 		}
 
 		///<summary>Format a data size provided in bit, with optional conversion to sample size</summary>
-		public static string HumanReadableDataSize(long bit, bool asSampleSize = false)
+		public static string HumanReadableDataSize(long bit, bool asSampleSize = false, bool extraPrecision = false)
 		{
 			if (asSampleSize)
 				return ((double)bit / slotSize).ToString("F2");
@@ -740,11 +747,11 @@ namespace KERBALISM
 			if (bit >= 8589934592)
 				return BuildString(((double)bit / 8589934592).ToString("F2"), " GB");
 			if (bit >= 8388608)
-				return BuildString(((double)bit / 8388608).ToString("F2"), " MB");
+				return BuildString(((double)bit / 8388608).ToString(extraPrecision ? "F2" : "F1"), " MB");
 			if (bit >= 8192)
-				return BuildString(((double)bit / 8192).ToString("F2"), " KB");
+				return BuildString(((double)bit / 8192).ToString(extraPrecision ? "F1" : "F0"), " KB");
 			if (bit >= 8)
-				return BuildString(((double)bit / 8).ToString("F0"), " B");
+				return BuildString(((double)bit / 8).ToString(extraPrecision ? "F1" : "F0"), " B");
 
 			return BuildString(bit.ToString(), " b");
 		}
@@ -758,9 +765,9 @@ namespace KERBALISM
 			capacity *= 8; //< to bytes
 			if (capacity < 1024.0) return BuildString((size * 1048576.0).ToString("F0"), "/", capacity.ToString("F0"), " B");
 			capacity /= 1024.0;
-			if (capacity < 1024.0) return BuildString((size * 1024).ToString("F2"), "/", capacity.ToString("F2"), " kB");
+			if (capacity < 1024.0) return BuildString((size * 1024).ToString("F0"), "/", capacity.ToString("F0"), " KB");
 			capacity /= 1024.0;
-			if (capacity < 1024.0) return BuildString(size.ToString("F2"), "/", capacity.ToString("F2"), " MB");
+			if (capacity < 1024.0) return BuildString(size.ToString("F1"), "/", capacity.ToString("F1"), " MB");
 			capacity /= 1024.0;
 			if (capacity < 1024.0) return BuildString((size / 1024.0).ToString("F2"), "/", capacity.ToString("F2"), " GB");
 			capacity /= 1024.0;
@@ -777,27 +784,27 @@ namespace KERBALISM
 				return BuildString(((double)size / 8589934592).ToString("F2"),
 					"/", ((double)capacity / 8589934592).ToString("F2"), " GB");
 			if (capacity >= 8388608)
-				return BuildString(((double)size / 8388608).ToString("F2"),
-					"/", ((double)capacity / 8388608).ToString("F2"), " MB");
+				return BuildString(((double)size / 8388608).ToString("F1"),
+					"/", ((double)capacity / 8388608).ToString("F1"), " MB");
 			if (capacity >= 8192)
-				return BuildString(((double)size / 8192).ToString("F2"),
-					"/", ((double)capacity / 8192).ToString("F2"), " KB");
+				return BuildString(((double)size / 8192).ToString("F0"),
+					"/", ((double)capacity / 8192).ToString("F0"), " KB");
 			if (capacity >= 8)
 				return BuildString(((double)size / 8).ToString("F0"),
 					"/", ((double)capacity / 8).ToString("F0"), " B");
 			return BuildString(size.ToString(),"/", capacity.ToString(), " b");
 		}
 
-		///<summary> Format data rate, the rate parameter is in Mb/s </summary>
+		///<summary> Format data rate, the rate parameter is in MB/s </summary>
 		public static string HumanReadableDataRate(double MBrate)
 		{
-			return MBrate < 0.000001 ? "none" : Lib.BuildString(HumanReadableDataSize(MBrate), "/s");
+			return MBrate < 1 / 8796093022208 ? "none" : Lib.BuildString(HumanReadableDataSize(MBrate), "/s");
 		}
 
-		///<summary> Format data rate, the rate parameter is in bit/s </summary>
-		public static string HumanReadableDataRate(long BitRate)
+		///<summary> Format data rate, the rate parameter is in bit/s. Set extraPrecision true to get an additional decimal</summary>
+		public static string HumanReadableDataRate(long BitRate, bool extraPrecision = false)
 		{
-			return BuildString(HumanReadableDataSize(BitRate), "/s");
+			return BuildString(HumanReadableDataSize(BitRate, false, true), "/s");
 		}
 
 		public static string HumanReadableSampleSlotAndMass(long bitSize, double massPerBit)
@@ -873,8 +880,9 @@ namespace KERBALISM
 			return Lib.BuildString("<color=cyan>", value.ToString("F1"), " CREDITS</color>");
 		}
 
+		#endregion
 
-		// --- GAME LOGIC -----------------------------------------------------------
+		#region GAME LOGIC
 
 		// return true if the current scene is flight
 		public static bool IsFlight()
@@ -921,8 +929,9 @@ namespace KERBALISM
 			return false;
 		}
 
+		#endregion
 
-		// --- BODY -----------------------------------------------------------------
+		#region BODY
 
 		// return reference body of the planetary system that contain the specified body
 		public static CelestialBody PlanetarySystem(CelestialBody body)
@@ -964,8 +973,9 @@ namespace KERBALISM
 			return angle_rad * 180.0 / Math.PI;
 		}
 
+		#endregion
 
-		// --- VESSEL ---------------------------------------------------------------
+		#region VESSEL
 
 		// return true if landed somewhere
 		public static bool Landed(Vessel v)
@@ -1127,7 +1137,9 @@ namespace KERBALISM
 				return ScienceUtil.GetExperimentBiome(vessel.mainBody, vessel.latitude, vessel.longitude);
 		}
 
-		// --- PART -----------------------------------------------------------------
+		#endregion
+
+		#region PART
 
 		// get list of parts recursively, useful from the editors
 		public static List<Part> GetPartsRecursively(Part root)
@@ -1201,8 +1213,9 @@ namespace KERBALISM
 			return CrewCount(p) > 0;
 		}
 
+		#endregion
 
-		// --- MODULE ---------------------------------------------------------------
+		#region PARTMODULE
 
 		// return all modules implementing a specific type in a vessel
 		// note: disabled modules are not returned
@@ -1349,7 +1362,9 @@ namespace KERBALISM
 			return data.index < data.prefabs.Count ? data.prefabs[data.index++] : null;
 		}
 
-		// --- RESOURCE -------------------------------------------------------------
+		#endregion
+
+		#region RESOURCE
 
 		/// <summary> Returns the amount of a resource in a part </summary>
 		public static double Amount(Part part, string resource_name, bool ignore_flow = false)
@@ -1648,8 +1663,9 @@ namespace KERBALISM
 			return p.Resources.Count == 0 ? 0.0 : p.Resources[0].maxAmount;
 		}
 
+		#endregion
 
-		// --- SCIENCE DATA ---------------------------------------------------------
+		#region SCIENCE
 
 		// return true if there is experiment data on the vessel
 		public static bool HasData( Vessel v )
@@ -1733,8 +1749,9 @@ namespace KERBALISM
 			}
 		}
 
+		#endregion
 
-		// -- TECH ------------------------------------------------------------------
+		#region TECH
 
 		// return true if the tech has been researched
 		public static bool HasTech( string tech_id )
@@ -1761,8 +1778,9 @@ namespace KERBALISM
 			return n;
 		}
 
+		#endregion
 
-		// --- ASSETS ---------------------------------------------------------------
+		#region ASSETS
 
 		///<summary> Returns the path of the directory containing the DLL </summary>
 		public static string Directory()
@@ -1849,9 +1867,9 @@ namespace KERBALISM
 			return mat;
 		}
 
+		#endregion
 
-
-		// --- CONFIG ---------------------------------------------------------------
+		#region CONFIG
 
 		// get a config node from the config system
 		public static ConfigNode ParseConfig( string path )
@@ -1893,8 +1911,9 @@ namespace KERBALISM
 			}
 		}
 
+		#endregion
 
-		// --- UI -------------------------------------------------------------------
+		#region UI
 
 		// return true if last GUILayout element was clicked
 		public static bool IsClicked( int button = 0 )
@@ -1956,7 +1975,38 @@ namespace KERBALISM
 			);
 		}
 
-		// --- PROTO ----------------------------------------------------------------
+		/// <summary>
+		/// Update the PAW guiName for controls that doesn't support it natively (UI_Toggle, UI_Cycle, UI_ChooseOption and UI_FloatEdit)
+		/// </summary>
+		public static void SetUnsupportedFieldGuiName(BaseField field, string guiName)
+		{
+			field.guiName = guiName;
+			UIPartActionItem item = null;
+			if (field.uiControlEditor != null && field.uiControlEditor.partActionItem != null)
+			{
+				item = field.uiControlEditor.partActionItem;
+			}
+			else if (field.uiControlFlight != null && field.uiControlFlight.partActionItem != null)
+			{
+				item = field.uiControlFlight.partActionItem;
+			}
+
+			if (item != null)
+			{
+				if (item is UIPartActionToggle)
+					((UIPartActionToggle)item).fieldName.SetText(guiName);
+				else if (item is UIPartActionCycle)
+					((UIPartActionCycle)item).fieldName.SetText(guiName);
+				else if (item is UIPartActionChooseOption)
+					((UIPartActionChooseOption)item).fieldName.SetText(guiName);
+				else if (item is UIPartActionFloatEdit)
+					((UIPartActionFloatEdit)item).fieldName.SetText(guiName);
+			}
+		}
+
+		#endregion
+
+		#region PROTO
 
 		public static class Proto
 		{
@@ -2003,6 +2053,9 @@ namespace KERBALISM
 			}
 		}
 
+		#endregion
+
+		#region OTHER
 
 		public static class Parse
 		{
@@ -2079,7 +2132,8 @@ namespace KERBALISM
 			value /= Math.Pow( 1000, i );
 			return value.ToString( "F2" ) + DistanceUnits[i] + unit;
 		}
-	}
 
+		#endregion
+	}
 
 } // KERBALISM

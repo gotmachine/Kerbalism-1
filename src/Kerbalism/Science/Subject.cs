@@ -44,6 +44,7 @@ namespace KERBALISM
 			SubjectId = Lib.BuildString(expInfo.id, "@", body.name, situation.ToString(), biome.Replace(" ", string.Empty));
 			dataStoredRnD = 0;
 			dataStoredFlight = 0;
+			MaxBufferSize = DataSizeForScienceValue(Science.buffer_science_value);
 		}
 
 		/// <summary>currently, this ctor should only be used to create invalid subjects</summary>
@@ -51,6 +52,7 @@ namespace KERBALISM
 		{
 			this.expInfo = expInfo;
 			situation = expInfo.GetSituation(vessel);
+			body = vessel.mainBody;
 			dataStoredRnD = 0;
 			dataStoredFlight = 0;
 			MaxBufferSize = DataSizeForScienceValue(Science.buffer_science_value);
@@ -61,8 +63,6 @@ namespace KERBALISM
 				biome = Lib.GetBiome(vessel, expInfo.allowMiniBiomes);
 			else
 				biome = string.Empty;
-
-			body = vessel.mainBody;
 
 			if (isValid)
 				SubjectId = Lib.BuildString(expInfo.id, "@", body.name, situation.ToString(), biome.Replace(" ", string.Empty));
@@ -108,33 +108,37 @@ namespace KERBALISM
 		{
 			KerbalismSituation current_sit = expInfo.GetSituation(vessel);
 			if (situation != current_sit)
-				return false;
+				return true;
 			if (!expInfo.IsAvailable(current_sit, vessel.mainBody))
-				return false;
+				return true;
 			if (body != vessel.mainBody)
-				return false;
+				return true;
 			if (expInfo.BiomeIsRelevant(current_sit) && Lib.GetBiome(vessel, expInfo.allowMiniBiomes) != biome)
-				return false;
-			return true;
+				return true;
+			return false;
 		}
 
 		public long DataSizeForScienceValue(double scienceValue)
 		{
-			return (long)((scienceValue * expInfo.dataScale) / ExperimentInfo.BodyScienceValue(body, situation));
+			return (long)((scienceValue * expInfo.dataScale) / BodyScienceValue());
 		}
 
+		public float BodyScienceValue()
+		{
+			return ExperimentInfo.BodyScienceValue(body, situation);
+		}
 
 		/// <summary>
 		/// return science credits value for a subject of the given size
-		/// (if size == 0, the max size is used)
+		/// (if size == -1, the max size is used)
 		/// </summary>
-		public double ScienceValueBase(long size = 0)
+		public double ScienceValueBase(long size = -1)
 		{
-			if (size == 0)
+			if (size < 0)
 				size = expInfo.fullSize;
 
 			// get value of the subject
-			return size / expInfo.dataScale * ExperimentInfo.BodyScienceValue(body, situation);
+			return size / expInfo.dataScale * BodyScienceValue();
 		}
 
 		/// <summary>
@@ -173,9 +177,9 @@ namespace KERBALISM
 		/// accounting for data already retrieved in RnD,
 		/// and with the ScienceGainMultiplier applied
 		/// </summary>
-		public double ScienceValueRemainingInRnD(long size = 0)
+		public double ScienceValueRemainingInRnD(long size = -1)
 		{
-			if (size == 0)
+			if (size < 0)
 				size = expInfo.fullSize;
 
 			return ScienceValueRemaining(ScienceValueBase(size));
@@ -186,14 +190,11 @@ namespace KERBALISM
 		/// accounting for data retrieved in RnD and data present in all vessel drive,
 		/// and with the ScienceGainMultiplier applied
 		/// </summary>
-		public double ScienceValueRemainingTotal(long size = 0)
+		public double ScienceValueRemainingTotal(long size = -1)
 		{
-			if (size == 0)
-				size = expInfo.fullSize;
-
+			if (size < 0) size = expInfo.fullSize;
 			size -= Science.GetFlightSubjectData(SubjectId);
-			if (size < double.Epsilon)
-				return 0;
+			if (size < 0) return 0;
 
 			return ScienceValueRemaining(ScienceValueBase(size));
 		}
@@ -202,9 +203,30 @@ namespace KERBALISM
 		/// return science credits value for a subject,
 		/// with the stock ScienceGainMultiplier applied
 		/// </summary>
-		public double ScienceValueGame(long size = 0)
+		public double ScienceValueGame(long size = -1)
 		{
 			return ScienceValueBase(size) * HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
+		}
+
+		public string ScienceValueInfo(bool showUncredited = true)
+		{
+			StringBuilder sb = new StringBuilder(50);
+			sb.Append("<color=#00ffffff>");
+			sb.Append(ScienceValueGame(dataStoredFlight + dataStoredRnD).ToString("F1"));
+			sb.Append(" / ");
+			sb.Append(ScienceValueGame().ToString("F1"));
+			sb.Append("</color>");
+			if (showUncredited)
+			{
+				double totsci = ScienceValueRemainingInRnD();
+				if (totsci > 0)
+				{
+					sb.Append(" (Uncredited : <color=#00ffffff>");
+					sb.Append(totsci.ToString("F1"));
+					sb.Append("</color>)");
+				}
+			}
+			return sb.ToString();
 		}
 
 		public long DataRemainingTotal()
@@ -222,15 +244,21 @@ namespace KERBALISM
 		/// <summary>
 		/// return a UI friendly subtitle for the subject
 		/// </summary>
-		public string Situation()
+		public string SubjectTitle(bool shortForm = false)
 		{
-			return Lib.BuildString(
-				ExperimentInfo.SituationString(situation),
-				" at ",
-				body.displayName,
-				" (",
-				biome,
-				")");
+			if (!isValid)
+				return Lib.BuildString(body.name, ": invalid situation");
+
+			if (shortForm)
+				if (string.IsNullOrEmpty(biome))
+					return Lib.BuildString(body.name, "/", ExperimentInfo.SituationString(situation));
+				else
+					return Lib.BuildString(body.name, "/", ExperimentInfo.SituationString(situation), "/", biome);
+
+			if (string.IsNullOrEmpty(biome))
+				return Lib.BuildString(ExperimentInfo.SituationString(situation)," at ", body.name);
+			else
+				return Lib.BuildString(ExperimentInfo.SituationString(situation), " at ", body.name, " (", biome, ")");
 		}
 
 		/// <summary>

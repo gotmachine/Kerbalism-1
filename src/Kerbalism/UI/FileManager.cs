@@ -85,18 +85,14 @@ namespace KERBALISM
 
 			// "X files : X/X MB, X samples : X/X slots (X Kg)"
 			string mainHeaderDesc = Lib.BuildString(
-					drivesFileCount.Sum().ToString(),
-					" files : ",
-					Lib.HumanReadableDataUsage(drivesFileUse.Sum(), drivesFileCap.Sum()),
-					", ",
-					drivesSampleCount.Sum().ToString(),
-					" samples : ",
-					((float)drivesSampleUse.Sum() / Lib.slotSize).ToString("F1"),
-					"/",
-					((float)drivesSampleCap.Sum() / Lib.slotSize).ToString("F1"),
-					" slots (",
-					Lib.HumanReadableMass(drivesSampleMass.Sum()),
-					")");
+				Lib.HumanReadableDataUsage(drivesFileUse.Sum(), drivesFileCap.Sum()),
+				", ",
+				((float)drivesSampleUse.Sum() / Lib.slotSize).ToString("F1"),
+				"/",
+				((float)drivesSampleCap.Sum() / Lib.slotSize).ToString("F1"),
+				" slots (",
+				Lib.HumanReadableMass(drivesSampleMass.Sum()),
+				")");
 
 			// main header
 			p.AddSection(mainHeaderTitle, mainHeaderDesc, null, () => { emptyFilter = !emptyFilter; });
@@ -117,26 +113,22 @@ namespace KERBALISM
 					drives[i].isPrivate ? "<color=#ffff00>" : string.Empty,
 					Lib.Ellipsis(drives[i].partName, Styles.ScaleStringLength(25)),
 					drives[i].isPrivate ? "</color> - " : " - ",
-					drivesFileCount.Sum().ToString(),
-					" files : ",
-					Lib.HumanReadableDataUsage(drivesFileUse.Sum(), drivesFileCap.Sum()),
+					Lib.HumanReadableDataUsage(drivesFileUse[i], drivesFileCap[i]),
 					", ",
-					drivesSampleCount.Sum().ToString(),
-					" samples : ",
-					((float)drivesSampleUse.Sum() / Lib.slotSize).ToString("F1"),
+					((float)drivesSampleUse[i] / Lib.slotSize).ToString("F1"),
 					"/",
-					((float)drivesSampleCap.Sum() / Lib.slotSize).ToString("F1"),
+					((float)drivesSampleCap[i] / Lib.slotSize).ToString("F1"),
 					" slots (",
-					Lib.HumanReadableMass(drivesSampleMass.Sum()),
+					Lib.HumanReadableMass(drivesSampleMass[i]),
 					")");
 
 				p.AddSection(driveHeader);
 
 				// drives header : "transfer data here" button, hide transfer for private drives
-				if (!drives[i].isPrivate)
-				{
-					p.AddIcon(Icons.transfer_here, resultTransferTooltip, () => { Drive.GetAllResultsToTransfer(v).ForEach(r => drives[i].Add(r)); });
-				}
+				//if (!drives[i].isPrivate)
+				//{
+				//	p.AddIcon(Icons.transfer_here, resultTransferTooltip, () => { Drive.GetAllResultsToTransfer(v).ForEach(r => drives[i].Add(r)); });
+				//}
 
 				// result entry
 				for (int j = 0; j < drives[i].Count; j++)
@@ -155,12 +147,15 @@ namespace KERBALISM
 
 					// TODO : science value / value remaining (total value), data size / total size, mass, stock exp_def RESULT string
 					string resTooltip = Lib.BuildString(
-					  result.type.ToString(), " : ", result.Title, "\n",
-					  "<color=#aaaaaa>", result.Situation, "</color>", "\n"
+					  result.Title, "\n",
+					  "<color=#aaaaaa>", result.Situation, "</color>\n",
+					  result.type.ToString(), " size : ", Lib.HumanReadableDataUsage(result.Size, result.MaxSize), "\n",
+					  "Science value : ", "<color=cyan>", result.ScienceValueGame().ToString("F1"), " / ", result.Subject.ScienceValueGame().ToString("F1"), "</color> (Not collected : <color=cyan>", result.Subject.ScienceValueRemainingTotal().ToString("F1"), "</color>)"
 					  );
 
 					// main label
-					p.AddContent(resLabel, resValue, resTooltip, (Action)null, () => Highlighter.Set(drives[i].partId, Color.cyan));
+					uint partId = drives[i].partId;
+					p.AddContent(resLabel, resValue, resTooltip, (Action)null, () => Highlighter.Set(partId, Color.cyan));
 
 					// file/sample icon
 					if (result.type == FileType.File)
@@ -202,7 +197,7 @@ namespace KERBALISM
 					}
 
 					// transfer button
-					if (result.IsTransferrable(v))
+					if (result.CanTransfer(v))
 					{
 						if (result.transfer)
 							p.AddIcon(Icons.transfer_cyan, "Flagged for transfer to another storage unit", () => { result.transfer = false; });

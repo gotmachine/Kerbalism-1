@@ -289,20 +289,6 @@ namespace KERBALISM
 			return info;
 		}
 
-		public static Drive WarpCache(Vessel v)
-		{
-			Guid id = Lib.VesselID(v);
-
-			// get from the cache, if it exist
-			Drive drive;
-			if (warp_caches.TryGetValue(id, out drive))
-				return drive;
-			
-			drive = new Drive("warp cache drive", 0, 0);
-			warp_caches.Add(id, drive);
-			return drive;
-		}
-
 		internal static T VesselObjectsCache<T>(Vessel vessel, string key)
 		{
 			return VesselObjectsCache<T>(Lib.VesselID(vessel), key);

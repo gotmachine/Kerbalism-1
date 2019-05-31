@@ -38,8 +38,8 @@ namespace KERBALISM
 		/// <summary>optional, some nice lines of text to be shown on the module description (VAB/SPH only)</summary>
 		public string experimentDesc { get; private set; }
 
-		/// <summary>data production rate (internally stored in bit/s), defined in cfg in MB/. For sample, 1 slot = 1024 MB.</summary>
-		public long dataRate { get; private set; }
+		/// <summary>time in seconds to obtain a full size result</summary>
+		public long duration { get; private set; }
 
 		/// <summary>EC consumption rate per-second</summary>
 		public double ecRate { get; private set; }
@@ -70,6 +70,9 @@ namespace KERBALISM
 
 		// internal data
 
+		/// <summary>data production rate (in bit/s)</summary>
+		public long dataRate => expInfo.fullSize / duration;
+
 		// not ideal because unboxing at but least we won't be parsing strings all the time and the array should be fast
 		private ObjectPair<string, object>[] req_values;
 
@@ -95,15 +98,13 @@ namespace KERBALISM
 			crewReset = Lib.ConfigValue(node, "crew_reset", string.Empty);
 			crewPrepare = Lib.ConfigValue(node, "crew_prepare", string.Empty);
 			resources = Lib.ConfigValue(node, "resources", string.Empty);
-
-			double duration = Lib.ConfigValue(node, "duration", 1.0);
-			dataRate = (long)(expInfo.fullSize / (duration * 60.0));
+			duration = Lib.ConfigValue(node, "duration", 60L);
 
 			// if dataRate is less than 10 bit/fixedUpdate == 500 bit/sec == ~0.00006 MB/sec
 			// the potential duration imprecision is greater than 10% and we should at least warn about it
 			if (dataRate < 500)
-				Lib.Log("WARNING : experiment variant '" + id + "' datarate is too low, duration will be wrong by as much as 10%. " +
-					"Never define datarate lower than 0.00006 MB/s, and try to keep it above ~0.0005 MB/s");
+				Lib.Log("WARNING : experiment variant '" + id + "' datarate is too low, duration will be imprecise by as much as 10%. \n" +
+					"Please set a duration and size that result in a data rate higher than 0.00006 MB/s, ideally above 0.0005 MB/s");
 
 			// parse requirements
 			ParseRequirements();
@@ -412,19 +413,7 @@ namespace KERBALISM
 			return result;
 		}
 		#endregion
-		#region static methods
 
-
-		#endregion
-
-		private static string MaskToString(string text, uint flag, uint situationMask, uint biomeMask)
-		{
-			string result = string.Empty;
-			if ((flag & situationMask) == 0) return result;
-			result = text;
-			if ((flag & biomeMask) != 0) result += " (Biomes)";
-			return result;
-		}
 
 
 

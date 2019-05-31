@@ -56,7 +56,7 @@ namespace KERBALISM
 			if (Lib.IsFlight())
 			{
 				// show DATA UI button, with size info
-				Events["DataManager"].guiName = Lib.StatusToggle("Data manager", GetStorageInfo());
+				Events["DataManager"].guiName = Lib.StatusToggle("Data", GetStorageInfo());
 				Events["DataManager"].active = true; // !IsPrivate();
 
 				bool activeVesselIsEVA =

@@ -53,14 +53,14 @@ namespace KERBALISM
 		public long MaxBufferSize => subject.MaxBufferSize;
 		/// <summary>max size in bit</summary>
 		public long MaxSize => subject.expInfo.fullSize;
-		/// <summary>(base) science points for max size</summary>
+		/// <summary>experiment base science points value (body multiplier and ScienceGainMultiplier not applied)</summary>
 		public double MaxScienceValue => subject.expInfo.scienceValue;
 		/// <summary>sample only : mass in ton/bit</summary>
 		public double MassPerBit => subject.expInfo.massPerBit;
 		/// <summary> will be shown as the main title in the file manager</summary>
 		public string Title => subject.Title;
 		/// <summary> will be shown as a subtext in the file manager</summary>
-		public string Situation => subject.Situation();
+		public string Situation => subject.SubjectTitle();
 		/// <summary> will be shown as a tooltip in the file manager</summary>
 		public string Description => subject.Description();
 
@@ -86,10 +86,10 @@ namespace KERBALISM
 			process = Lib.ConfigValue(node, "process", false);
 			bufferSize = Lib.ConfigValue(node, "transmitBuffer", 0);
 
-			switch (Lib.ConfigValue(node, "type", "invalid"))
+			switch (Lib.ConfigValue(node, "type", -1))
 			{
-				case nameof(FileType.File): type = FileType.File; break;
-				case nameof(FileType.Sample): type = FileType.Sample; break;
+				case (int)FileType.File: type = FileType.File; break;
+				case (int)FileType.Sample: type = FileType.Sample; break;
 				default:
 					Lib.Log("LOADING ERROR : result '" + subjectId + "' wasn't loaded from save, type was invalid.");
 					return;
@@ -180,7 +180,7 @@ namespace KERBALISM
 
 		public void Save(ConfigNode node)
 		{
-			node.AddValue("type", nameof(type));
+			node.AddValue("type", (int)type);
 			node.AddValue("subject_id", subjectId);
 			node.AddValue("title", Title);
 			node.AddValue("size", size);
@@ -192,7 +192,7 @@ namespace KERBALISM
 		public double ScienceValueBase(long dataSize = 0)
 		{
 			if (dataSize == 0) dataSize = size;
-			return ((double)dataSize / (double)MaxSize) * MaxScienceValue;
+			return ((double)dataSize / (double)MaxSize) * MaxScienceValue * subject.BodyScienceValue();
 		}
 
 		/// <summary> science value of the result, including the ScienceGainMultiplier</summary>
@@ -200,6 +200,7 @@ namespace KERBALISM
 		{
 			return ScienceValueBase(dataSize) * HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
 		}
+
 
 		/// <summary> get the stock ScienceSubject object that should be stored in RnD. </summary>
 		public ScienceSubject ParseToStockSubject(bool onlyTransmitBuffer)
@@ -210,7 +211,7 @@ namespace KERBALISM
 			float dataScale = (float)(MaxSize / MaxScienceValue);
 
 			// set at subject creation : body multiplier
-			float subjectValue = ExperimentInfo.BodyScienceValue(subject.body, subject.situation);
+			float subjectValue = subject.BodyScienceValue();
 
 			// set at subject creation : ScienceExperiment.scienceCap * body multiplier
 			float scienceCap = (float)(MaxScienceValue * subjectValue);
@@ -232,7 +233,6 @@ namespace KERBALISM
 		public void Delete()
 		{
 			drive.Remove(this);
-			DeleteDriveRef();
 		}
 
 		public bool IsDeleted()
@@ -243,6 +243,7 @@ namespace KERBALISM
 		/// <summary> Do not use unless you already have deleted the reference to the result in the drive</summary>
 		public void DeleteDriveRef()
 		{
+			Science.AddFlightSubjectData(subjectId, -size);
 			drive = null;
 		}
 
@@ -324,20 +325,16 @@ namespace KERBALISM
 				return 0.0;
 		}
 
-		/// <summary> return true if result is flagged for transfer and if all conditions are met</summary>
-		public bool IsTransferrable(Vessel vessel)
+		/// <summary> return true if transfer conditions are met</summary>
+		public bool CanTransfer(Vessel vessel)
 		{
-			return IsTransferrable(Lib.CrewCount(vessel));
+			return CanTransfer(Lib.CrewCount(vessel));
 		}
 
-		/// <summary> return true if result is flagged for transfer and if all conditions are met</summary>
-		public bool IsTransferrable(int crewCount)
+		/// <summary> return true if transfer conditions are met</summary>
+		public bool CanTransfer(int crewCount)
 		{
-			return transfer &&
-			(
-				type == FileType.File ||
-				(type == FileType.Sample && (PreferencesScience.Instance.sampleTransfer || crewCount > 0))
-			);
+			return type == FileType.File || (type == FileType.Sample && (PreferencesScience.Instance.sampleTransfer || crewCount > 0));
 		}
 
 		/// <summary>
