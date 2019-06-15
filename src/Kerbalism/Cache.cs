@@ -9,6 +9,8 @@ namespace KERBALISM
 	{
 		public Vessel_info(Vessel v, Guid vessel_id, UInt64 inc)
 		{
+			Profiler.Start("vesselinfo");
+
 			// NOTE: anything used here can't in turn use cache, unless you know what you are doing
 
 			// NOTE: you can't cache vessel position
@@ -108,6 +110,8 @@ namespace KERBALISM
 			gravioli = Sim.Graviolis(v);
 
 			drive_fileusage = Drive.GetAvailableFileSpace(v, out drive_filespace);
+
+			Profiler.Stop("vesselinfo");
 
 		}
 

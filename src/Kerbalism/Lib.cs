@@ -1137,6 +1137,19 @@ namespace KERBALISM
 				return ScienceUtil.GetExperimentBiome(vessel.mainBody, vessel.latitude, vessel.longitude);
 		}
 
+		/// <summary>
+		/// Return the biome (body attribute object) for the current vessel position.
+		/// In this object, the "name" field is the "technical" name, the displayName field is the localized name
+		/// </summary>
+		public static CBAttributeMapSO.MapAttribute GetBiome(Vessel vessel)
+		{
+			if (vessel.mainBody.BiomeMap != null)
+			{
+				return vessel.mainBody.BiomeMap.GetAtt(vessel.latitude * (Math.PI * 180.0), vessel.longitude * (Math.PI * 180.0));
+			}
+			return null;
+		}
+
 		#endregion
 
 		#region PART

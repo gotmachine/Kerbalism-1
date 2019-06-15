@@ -220,6 +220,7 @@ namespace KERBALISM
 			}
 
 			// non-converters must always have a subject
+			// TODO : this must be able to work with non-experiment subjects
 			if (Subject == null || Subject.HasChanged(vessel))
 			{
 				Subject = Subject.GetCurrentSubject(GetExperimentInfo(), vessel);
@@ -259,6 +260,11 @@ namespace KERBALISM
 		public abstract void PostUpdate(Vessel vessel, double elapsed_s, long dataProcessed);
 
 		/// <summary>
+		/// override this method if you wish to define a cap on how much science the result will yeld (must be lower than the ExperimentInfo.ScienceValue)
+		/// </summary>
+		public virtual double GetResultScienceCap() => -1.0;
+
+		/// <summary>
 		/// If no result exists, create a new (empty) result for the process.
 		/// Using minDriveCapacity = 0 will allow the creation of the result on a full drive.
 		/// </summary>
@@ -270,7 +276,7 @@ namespace KERBALISM
 				Drive drive = Drive.GetDriveBestCapacity(vessel, type, minDriveCapacity, privateHdId);
 				if (drive != null)
 				{
-					result = new Result(drive, type, Subject);
+					result = new Result(drive, type, Subject, GetResultScienceCap());
 					return true;
 				}
 			}

@@ -219,6 +219,14 @@ namespace KERBALISM
 			}
 		}
 
+		public override double GetResultScienceCap()
+		{
+			if (expVar.scienceCap > 0)
+				return expVar.scienceCap;
+			else
+				return base.GetResultScienceCap();
+		}
+
 		public long GetDataDone()
 		{
 			return existingData % expVar.expInfo.fullSize;

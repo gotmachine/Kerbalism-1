@@ -68,6 +68,13 @@ namespace KERBALISM
 		/// <summary>optional, resources consumed by this experiment</summary>
 		public string resources { get; private set; }
 
+		/// <summary>
+		/// limit on the scienceValue that this variant can generate,
+		/// must be lower than the ExperimentInfo scienceValue. Can be used for example to do
+		/// "tiered" variants without having to use a separate ExperimentInfo definition.
+		/// </summary>
+		public double scienceCap { get; private set; }
+
 		// internal data
 
 		/// <summary>data production rate (in bit/s)</summary>
@@ -99,6 +106,9 @@ namespace KERBALISM
 			crewPrepare = Lib.ConfigValue(node, "crew_prepare", string.Empty);
 			resources = Lib.ConfigValue(node, "resources", string.Empty);
 			duration = Lib.ConfigValue(node, "duration", 60L);
+			scienceCap = Lib.ConfigValue(node, "scienceCap", -1.0);
+			if (scienceCap > expInfo.scienceValue)
+				scienceCap = -1.0;
 
 			// if dataRate is less than 10 bit/fixedUpdate == 500 bit/sec == ~0.00006 MB/sec
 			// the potential duration imprecision is greater than 10% and we should at least warn about it
@@ -170,7 +180,7 @@ namespace KERBALISM
 					case "SunAngleMax": good = Lib.SunBodyAngle(v) <= (double)req_values[i].value; break;
 
 					case "Vacuum": good = !v.mainBody.atmosphere || v.altitude > v.mainBody.atmosphereDepth; break;
-					case "Ocean": good = v.mainBody.ocean && v.altitude < 0.0; break;
+					case "Ocean": good = v.mainBody.ocean && v.altitude < 0.0; break; // TODO : this can be inaccurate
 					case "PlanetarySpace": good = v.mainBody.flightGlobalsIndex != 0 && !Lib.Landed(v) && v.altitude > v.mainBody.atmosphereDepth; break;
 					case "AbsoluteZero": good = vi.temperature < 30.0; break;
 					case "InnerBelt": good = vi.inner_belt; break;

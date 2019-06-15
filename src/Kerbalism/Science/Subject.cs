@@ -57,7 +57,7 @@ namespace KERBALISM
 			dataStoredFlight = 0;
 			MaxBufferSize = DataSizeForScienceValue(Science.buffer_science_value);
 
-			isValid = expInfo.IsAvailable(situation, body);
+			isValid = situation != KerbalismSituation.None;
 
 			if (expInfo.BiomeIsRelevant(situation))
 				biome = Lib.GetBiome(vessel, expInfo.allowMiniBiomes);
@@ -108,8 +108,6 @@ namespace KERBALISM
 		{
 			KerbalismSituation current_sit = expInfo.GetSituation(vessel);
 			if (situation != current_sit)
-				return true;
-			if (!expInfo.IsAvailable(current_sit, vessel.mainBody))
 				return true;
 			if (body != vessel.mainBody)
 				return true;

@@ -179,6 +179,8 @@ namespace KERBALISM
 				// if loaded
 				if (v.loaded)
 				{
+					//vd.UpdateMT(v);
+
 					// get most used resource
 					Resource_info ec = resources.Info(v, "ElectricCharge");
 
@@ -239,6 +241,8 @@ namespace KERBALISM
 			// we will update the vessel whose most recent background update is the oldest
 			if (last_v != null)
 			{
+				//last_vd.UpdateST(last_v);
+
 				// get most used resource
 				Resource_info last_ec = last_resources.Info(last_v, "ElectricCharge");
 

@@ -79,61 +79,67 @@ namespace KERBALISM
 
 
 
-				// build the biomes cache
+				// build the biome index cache. the purpose of this is to allow fast checking of a biome availability using the biome object and its index.
 				foreach (CelestialBody body in FlightGlobals.Bodies)
 				{
 					if (body.BiomeMap != null)
-						biomes.Add(body, body.BiomeMap.Attributes.Select(y => y.name).ToArray());
+					{
+						for (int i = 0; i < body.BiomeMap.Attributes.Length; i++)
+						{
+							biomes.Add(body.BiomeMap.Attributes[i], (byte)i);
+						}
+					}
+						
 				}
 
 				// build the subject cache (megaloop !)
 				// and get the data already retrieved in RnD
-				foreach (ExperimentInfo exp_info in exp_infos.Values)
-				{
-					foreach (CelestialBody body in FlightGlobals.Bodies)
-					{
-						foreach (int sitInt in Enum.GetValues(typeof(KerbalismSituation)))
-						{
-							KerbalismSituation sit = (KerbalismSituation)sitInt;
+				//foreach (ExperimentInfo exp_info in exp_infos.Values)
+				//{
+				//	foreach (CelestialBody body in FlightGlobals.Bodies)
+				//	{
+				//		foreach (int sitInt in Enum.GetValues(typeof(KerbalismSituation)))
+				//		{
+				//			KerbalismSituation sit = (KerbalismSituation)sitInt;
 
-							if (sit == KerbalismSituation.None) continue;
+				//			if (sit == KerbalismSituation.None) continue;
 
-							if (exp_info.IsAvailable(sit, body))
-							{
-								if (!exp_info.BiomeIsRelevant(sit))
-								{
-									Subject subject = new Subject(exp_info, sit, body, string.Empty, true);
-									subject.dataStoredRnD += subject.DataStoredInRnD();
-									subjects.Add(subject.SubjectId, subject);
-								}
-								else
-								{
-									if (biomes.ContainsKey(body))
-									{
-										foreach (string biome in biomes[body])
-										{
-											Subject subject = new Subject(exp_info, sit, body, biome, true);
-											subject.dataStoredRnD += subject.DataStoredInRnD();
-											subjects.Add(subject.SubjectId, subject);
-										}
-									}
+				//			if (exp_info.IsAvailable(sit, body))
+				//			{
+				//				if (!exp_info.BiomeIsRelevant(sit))
+				//				{
+				//					Subject subject = new Subject(exp_info, sit, body, string.Empty, true);
+				//					subject.dataStoredRnD += subject.DataStoredInRnD();
+				//					subjects.Add(subject.SubjectId, subject);
+				//				}
+				//				else
+				//				{
+				//					if (biomes.ContainsKey(body))
+				//					{
+				//						foreach (string biome in biomes[body])
+				//						{
+				//							Subject subject = new Subject(exp_info, sit, body, biome, true);
+				//							subject.dataStoredRnD += subject.DataStoredInRnD();
+				//							subjects.Add(subject.SubjectId, subject);
+				//						}
+				//					}
 
-									// TODO : minibiomes doesn't work (exception because tying to add the same subjectId twice
-									//if (exp_info.allowMiniBiomes)
-									//{
-									//	foreach (MiniBiome minibiome in body.MiniBiomes)
-									//	{
-									//		// TODO : Check that minibiome.GetTagKeyString is the right string
-									//		Subject subject = new Subject(exp_info, sit, body, minibiome.GetTagKeyString, true);
-									//		subject.dataStoredRnD += subject.DataStoredInRnD();
-									//		subjects.Add(subject.SubjectId, subject);
-									//	}
-									//}
-								}
-							}
-						}
-					}
-				}
+				//					// TODO : minibiomes doesn't work (exception because tying to add the same subjectId twice
+				//					//if (exp_info.allowMiniBiomes)
+				//					//{
+				//					//	foreach (MiniBiome minibiome in body.MiniBiomes)
+				//					//	{
+				//					//		// TODO : Check that minibiome.GetTagKeyString is the right string
+				//					//		Subject subject = new Subject(exp_info, sit, body, minibiome.GetTagKeyString, true);
+				//					//		subject.dataStoredRnD += subject.DataStoredInRnD();
+				//					//		subjects.Add(subject.SubjectId, subject);
+				//					//	}
+				//					//}
+				//				}
+				//			}
+				//		}
+				//	}
+				//}
 
 				// get the data stored in all drives from all vessels
 				foreach (Drive drive in DB.drives.Values)
@@ -518,7 +524,7 @@ namespace KERBALISM
 			// apply the game difficulty factor :
 			credits *= HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
 			// and finaly give the credits to the player
-			ResearchAndDevelopment.Instance.AddScience(credits,transmitOnly ? TransactionReasons.ScienceTransmission : TransactionReasons.VesselRecovery);
+			ResearchAndDevelopment.Instance.AddScience(credits, transmitOnly ? TransactionReasons.ScienceTransmission : TransactionReasons.VesselRecovery);
 
 			// fire game event
 			// - this could be slow or a no-op, depending on the number of listeners
@@ -526,6 +532,7 @@ namespace KERBALISM
 			//   function only once in a while
 			GameEvents.OnScienceRecieved.Fire(credits, subject, pv, false);
 
+			// TODO : what is the purpose of having our own event ? 
 			//API.OnScienceReceived.Fire(credits, subject, pv, transmitted);
 
 			return credits;
@@ -727,14 +734,19 @@ namespace KERBALISM
 		#endregion
 
 
-
+		// return the index of a biome attribute object in the CelestialBody.BiomeMap.Attributes array
+		public static int GetBiomeIndex(CBAttributeMapSO.MapAttribute biome)
+		{
+			// note : checking for containkey is useless : if the biome isn't in the dictionary, we have a very big problem anyway
+			return biomes[biome];
+		}
 		
 
 		// experiment info 
 		private static readonly Dictionary<string, ExperimentInfo> exp_infos = new Dictionary<string, ExperimentInfo>();
 		private static readonly Dictionary<string, ExperimentVariant> exp_variants = new Dictionary<string, ExperimentVariant>();
 		private static readonly Dictionary<string, Subject> subjects = new Dictionary<string, Subject>();
-		private static readonly Dictionary<CelestialBody, string[]> biomes = new Dictionary<CelestialBody, string[]>();
+		private static readonly Dictionary<CBAttributeMapSO.MapAttribute, byte> biomes = new Dictionary<CBAttributeMapSO.MapAttribute, byte>();
 
 	}
 

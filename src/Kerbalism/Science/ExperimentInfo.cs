@@ -2,13 +2,66 @@
 using System.Collections.Generic;
 using UnityEngine;
 using KSP.Localization;
+using System.Collections;
 
-// TODO : finish migrating ExperimentSituation to become the replacement of the stock ScienceExperiment :
+
 // - migrate the static things to instance
 // - remove the vessel, migrate the situation checking to a IsAvailable(vessel) method
 
 /*
+ *
+ *
+
+// TODO : FINAL REFACTOR
+- Subjects as a HashSet in ExperimentInfo
+- that will allow fast get/update to the subjects stored data (happens very often)
+- additional requirements :
+	- this might benefit from having a bitArray of situations, bodies, and biomes, but that mean we need to have fast access lists of
+		- situations, bodies, biomes for each body
+	- fastest way to check biome is by using the array of CBAttributeMapSO.MapAttribute objects
+	- low occurence : get the subject from the situation+body+biome 
+	- very high occurence : check if a subject is still valid for the current vessel
+		- get current situation -> either way, having a bitmask of possible situations could make things a lot faster  :
+			- get all current situations, then check the best one : need instantiatiting a list each time
+			- get best situation : need 
+		- get current
 Example config :
+
+Stock "InSpaceLow" multipliers
+Bop		9×
+Dres	7×
+Duna	7×
+Eeloo	12×
+Eve		7×
+Gilly	8×
+Ike		7×
+Jool	7×
+Kerbin	1×
+Kerbol	11×
+Laythe	9×
+Minmus	4×
+Moho	8×
+Mun		3×
+Pol		9×
+Tylo	10×
+Vall	9×
+
+Kerbalism custom situations and their default multiplier (applied to the InSpaceLow stock multiplier) :
+InSpace			1×
+InnerBelt		1.4×
+OuterBelt		1.4×
+Magnetosphere	1.3×
+Reentry			1×
+Interstellar	15×
+
+Stock situations :
+SrfLanded
+SrfSplashed
+FlyingLow
+FlyingHigh
+InSpaceLow
+InSpaceHigh
+
 
 EXPERIMENT_INFO
 {
@@ -20,12 +73,34 @@ EXPERIMENT_INFO
 
 	// remove any of those to prevent a result from being available
 	// ommit "@biome" to make the result non biome dependant
-	situation = SrfLanded@biomes
+	situation = SrfLanded@Biomes
 	situation = SrfSplashed@biomes
 	situation = FlyingLow@biomes
 	situation = FlyingHigh@biomes
 	situation = InSpaceLow@biomes
 	situation = InSpaceHigh@biomes
+
+	situation = SrfLanded@Biomes@Kerbin,Laythe
+	situation = SrfLanded@Global
+
+
+
+	SITUATION
+	{
+		name = SrfLanded
+		// optional, science value factor is applied on top of the stock "InSpaceLow" body multiplier. See the situation list for the default values.
+		scienceMultiplier =
+
+		// One value per line, multiple line allowed to combine the conditions.
+		// Use the "!" prefix for "not" (ex : "!sun", "!Duna"), not available for "all" and "global". body = global makes the experiment body independant and force biomes to be global as well.
+		body =				// Default : all. Other values : global, homeBody, sun, planets, moons, rockBodies, atmosphereBodies, oceanBodies, bodyName.
+
+		// One value per line, multiple line allowed to combine the conditions.
+		// Use the "!" prefix for "not" (ex : "!sun", "!Duna")
+		// Use the "*" prefix for a partial match (biomes only, case insensitive), examples : "*pole", "*polar", "*crater"			
+		biome =				// Default : all. Other values : global, biomename
+		miniBiome =			// Default : global. Other values :  all, biomename
+	}
 
 	dataSize =				// in MB for a full result
 	sampleVolume =			// in m3 for a full result NOT IMPLEMENTED, MAY OR MAY NOT BE ADDED 
@@ -108,21 +183,52 @@ namespace KERBALISM
 	/// </summary>
 	public enum KerbalismSituation
 	{
-		None = 0,
+		// TODO : order this so the higher priority situation are first.
 
+
+		//None = 0,
+		//SrfLanded = (1 << 0), // 1
+		//SrfSplashed = (1 << 1), // 2
+		//FlyingLow = (1 << 2), // 4
+		//FlyingHigh = (1 << 3), // 8
+		//InSpaceLow = (1 << 4), // 16
+		//InSpaceHigh = (1 << 5), // 32
+
+		//// Kerbalism extensions
+
+		//InSpace = (1 << 6), // 64
+		//InnerBelt = (1 << 7), // 128
+		//OuterBelt = (1 << 8), // 256
+		//Magnetosphere = (1 << 9), // 512
+		//Reentry = (1 << 10), // 1024
+		//Interstellar = (1 << 11) // 2048
+
+
+		None = 0,
+		
 		SrfLanded = (1 << 0), // 1
 		SrfSplashed = (1 << 1), // 2
-		FlyingLow = (1 << 2), // 4
-		FlyingHigh = (1 << 3), // 8
-		InSpaceLow = (1 << 4), // 16
-		InSpaceHigh = (1 << 5), // 32
 
-		// Kerbalism extensions
+		FlyingLow = (1 << 2), // 4
+		Reentry = (1 << 3), // 8
+		FlyingHigh = (1 << 4), // 16
+
+		Magnetosphere = (1 << 5), // 32
 		InnerBelt = (1 << 6), // 64
 		OuterBelt = (1 << 7), // 128
-		Magnetosphere = (1 << 8), // 256
-		Reentry = (1 << 9), // 512
-		Interstellar = (1 << 10) // 1024
+		Interstellar = (1 << 8), // 256
+
+		InSpace = (1 << 9), // 512
+		InSpaceLow = (1 << 10), // 1024
+		InSpaceHigh = (1 << 11) // 2048
+
+		// Kerbalism extensions
+
+
+
+		
+		
+
 	}
 
 	/// <summary>
@@ -137,11 +243,6 @@ namespace KERBALISM
 		// - scienceCap is unsupported, we always set scienceCap = scienceValue. May come back later as something tied to the variants
 		// - compatibility with (stock) contracts when using custom situations/requirements can maybe be fixed by checking contract validity
 		//   trough the GameEvents.Contract.OnOffered event
-		// - body multipliers for the custom situations are currently hardcoded (in ExperimentSubject.BodyScienceValue()):
-		//		- innerBelt/outerbelt : spaceHigh * 1.3
-		//		- Magnetosphere : spaceHigh * 1.1
-		//		- Interstellar : spaceHigh * 15.0
-		//		- Reentry : flyingHigh * 1.3
 		// - all data sizes are expressed as an integer (long type) value in bits, while stock use a floating point value in MB (1MB = 8388608 bits)
 		//   this is done to avoid floating-point precision issues when manipulating file sizes, but it has a some drawbacks :
 		//		- risk of max value overflowing when doing math operations or storing large values (long.MaxValue => 1048576 TB)
@@ -171,6 +272,11 @@ namespace KERBALISM
 		public double dataScale;          // = fullSize / scienceValue. Same as stock but the unit is in bit/point instead of MB/point
 		public readonly double massPerBit;
 		public ScienceExperiment stockDefinition;
+
+		private readonly Dictionary<string, Subject> subjects;
+		private readonly KerbalismSituation[] situations;
+
+
 
 		public ExperimentInfo(ConfigNode node)
 		{
@@ -299,66 +405,66 @@ namespace KERBALISM
 		/// situations that should not exist (flying high/low with bodies that
 		/// don't have atmosphere), so we have to force the situations a bit.
 		/// </summary>
-		public KerbalismSituation GetSituation(Vessel vessel)
-		{
-			switch (vessel.situation)
-			{
-				case Vessel.Situations.SPLASHED:
-					return IsAvailable(KerbalismSituation.SrfSplashed, vessel.mainBody) ? KerbalismSituation.SrfSplashed : KerbalismSituation.None;
-				case Vessel.Situations.PRELAUNCH:
-				case Vessel.Situations.LANDED:
-					return IsAvailable(KerbalismSituation.SrfLanded, vessel.mainBody) ? KerbalismSituation.SrfLanded : KerbalismSituation.None;
-			}
+		//public KerbalismSituation GetSituation(Vessel vessel)
+		//{
+		//	switch (vessel.situation)
+		//	{
+		//		case Vessel.Situations.SPLASHED:
+		//			return IsAvailable(KerbalismSituation.SrfSplashed, vessel.mainBody) ? KerbalismSituation.SrfSplashed : KerbalismSituation.None;
+		//		case Vessel.Situations.PRELAUNCH:
+		//		case Vessel.Situations.LANDED:
+		//			return IsAvailable(KerbalismSituation.SrfLanded, vessel.mainBody) ? KerbalismSituation.SrfLanded : KerbalismSituation.None;
+		//	}
 
-			if (vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth)
-			{
-				if (vessel.altitude < vessel.mainBody.scienceValues.flyingAltitudeThreshold)
-				{
-					return IsAvailable(KerbalismSituation.FlyingLow, vessel.mainBody) ? KerbalismSituation.FlyingLow : KerbalismSituation.None;
-				}
-				// note : checking vessel.mach > ~8-10 may be more accurate than using srfSpeed
-				else if (IsAvailable(KerbalismSituation.Reentry, vessel.mainBody)
-					&& vessel.loaded
-					&& vessel.orbit.ApA > vessel.mainBody.atmosphereDepth
-					&& vessel.verticalSpeed < -50.0
-					&& vessel.srfSpeed > 1984)
-				{
-					return KerbalismSituation.Reentry;
-				}
+		//	if (vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth)
+		//	{
+		//		if (vessel.altitude < vessel.mainBody.scienceValues.flyingAltitudeThreshold)
+		//		{
+		//			return IsAvailable(KerbalismSituation.FlyingLow, vessel.mainBody) ? KerbalismSituation.FlyingLow : KerbalismSituation.None;
+		//		}
+		//		// note : checking vessel.mach > ~8-10 may be more accurate than using srfSpeed
+		//		else if (IsAvailable(KerbalismSituation.Reentry, vessel.mainBody)
+		//			&& vessel.loaded
+		//			&& vessel.orbit.ApA > vessel.mainBody.atmosphereDepth
+		//			&& vessel.verticalSpeed < -50.0
+		//			&& vessel.srfSpeed > 1984)
+		//		{
+		//			return KerbalismSituation.Reentry;
+		//		}
 
-				return IsAvailable(KerbalismSituation.FlyingHigh, vessel.mainBody) ? KerbalismSituation.FlyingHigh : KerbalismSituation.None;
-			}
+		//		return IsAvailable(KerbalismSituation.FlyingHigh, vessel.mainBody) ? KerbalismSituation.FlyingHigh : KerbalismSituation.None;
+		//	}
 
-			var vi = Cache.VesselInfo(vessel);
+		//	var vi = Cache.VesselInfo(vessel);
 
-			// the radiation related situations will override spaceHigh and space low
-			// we also assume that magnetosphere will override the belts
-			if (IsAvailable(KerbalismSituation.Magnetosphere, vessel.mainBody) && vi.magnetosphere) return KerbalismSituation.Magnetosphere;
-			if (IsAvailable(KerbalismSituation.InnerBelt, vessel.mainBody) && vi.inner_belt) return KerbalismSituation.InnerBelt;
-			if (IsAvailable(KerbalismSituation.OuterBelt, vessel.mainBody) && vi.outer_belt) return KerbalismSituation.OuterBelt;
+		//	// the radiation related situations will override spaceHigh and spaceLow
+		//	// we also assume that magnetosphere will override the belts
+		//	if (IsAvailable(KerbalismSituation.Magnetosphere, vessel.mainBody) && vi.magnetosphere) return KerbalismSituation.Magnetosphere;
+		//	if (IsAvailable(KerbalismSituation.InnerBelt, vessel.mainBody) && vi.inner_belt) return KerbalismSituation.InnerBelt;
+		//	if (IsAvailable(KerbalismSituation.OuterBelt, vessel.mainBody) && vi.outer_belt) return KerbalismSituation.OuterBelt;
 
-			if (vessel.altitude < vessel.mainBody.scienceValues.spaceAltitudeThreshold)
-				return IsAvailable(KerbalismSituation.InSpaceLow, vessel.mainBody) ? KerbalismSituation.InSpaceLow : KerbalismSituation.None;
+		//	if (vessel.altitude < vessel.mainBody.scienceValues.spaceAltitudeThreshold)
+		//		return IsAvailable(KerbalismSituation.InSpaceLow, vessel.mainBody) ? KerbalismSituation.InSpaceLow : KerbalismSituation.None;
 
-			// interstellar should only override space high ?
-			if (IsAvailable(KerbalismSituation.Interstellar, vessel.mainBody) && vi.interstellar) return KerbalismSituation.Interstellar;
+		//	// interstellar should only override space high ?
+		//	if (IsAvailable(KerbalismSituation.Interstellar, vessel.mainBody) && vi.interstellar) return KerbalismSituation.Interstellar;
 
-			return IsAvailable(KerbalismSituation.InSpaceHigh, vessel.mainBody) ? KerbalismSituation.InSpaceHigh : KerbalismSituation.None;
-		}
+		//	return IsAvailable(KerbalismSituation.InSpaceHigh, vessel.mainBody) ? KerbalismSituation.InSpaceHigh : KerbalismSituation.None;
+		//}
 
 		public override string ToString()
 		{
 			return title;
 		}
 
-		public bool IsAvailable(KerbalismSituation situation, CelestialBody body)
-		{
-			if (requireAtmosphere)
-			{
-				return body.atmosphere && (situationMask & (int)situation) != 0;
-			}
-			return ((int)situationMask & (int)situation) != 0;
-		}
+		//public bool IsAvailable(KerbalismSituation situation, CelestialBody body)
+		//{
+		//	if (requireAtmosphere)
+		//	{
+		//		return body.atmosphere && (situationMask & (int)situation) != 0;
+		//	}
+		//	return ((int)situationMask & (int)situation) != 0;
+		//}
 
 		public bool BiomeIsRelevant(KerbalismSituation situation)
 		{
@@ -410,62 +516,187 @@ namespace KERBALISM
 			}
 		}
 
-		public List<Subject> GetSubjects(CelestialBody body = null, KerbalismSituation situation = KerbalismSituation.None)
+		//public List<Subject> GetSubjects(CelestialBody body = null, KerbalismSituation situation = KerbalismSituation.None)
+		//{
+		//	List<Subject> subjects = new List<Subject>();
+		//	BodySubjects[] bodySubjects = null;
+		//	if (body == null)
+		//	{
+		//		bodySubjects = allSubjects;
+		//	}	
+		//	else
+		//	{
+		//		foreach (BodySubjects bodySubs in allSubjects)
+		//		{
+		//			if (bodySubs.Body == body)
+		//			{
+		//				bodySubjects = new BodySubjects[] { bodySubs };
+		//				break;
+		//			}
+		//		}
+		//	}
+
+		//	if (bodySubjects == null) return subjects;
+
+		//	foreach (BodySubjects bodySub in bodySubjects)
+		//	{
+		//		foreach (SituationSubjects sitSubjects in bodySub.Situations)
+		//		{
+		//			if (situation == KerbalismSituation.None)
+		//			{
+		//				subjects.AddRange(sitSubjects.Subjects);
+		//			}
+		//			else if (sitSubjects.situation == situation)
+		//			{
+		//				subjects.AddRange(sitSubjects.Subjects);
+		//				return subjects;
+		//			}
+		//		}
+		//	}
+
+		//	return subjects;
+		//}
+
+		// Note : maybe it's better to return a list of valid situations for the vessel, and then filter it based on the available situations.
+		// might be cleaner than this mess.
+		// Note : this fully rely on the fact that the enum is ordered by priority (some situations will override others).
+		// Any addition/removal from the enum will break the following method
+		public KerbalismSituation GetSituation(Vessel vessel)
 		{
-			List<Subject> subjects = new List<Subject>();
-			BodySubjects[] bodySubjects = null;
-			if (body == null)
+			CBAttributeMapSO.MapAttribute biome = Lib.GetBiome(vessel);
+			Vessel_info vi = null;
+
+			for (int i = 0; i < availableSituations.Length; i++)
 			{
-				bodySubjects = allSubjects;
-			}	
-			else
-			{
-				foreach (BodySubjects bodySubs in allSubjects)
+				if (availableSituations[i] == null || !availableSituations[i].IsAvailable(vessel.mainBody, biome))
+					continue;
+
+				KerbalismSituation situation = (KerbalismSituation)(1 << i);
+
+				switch (situation)
 				{
-					if (bodySubs.Body == body)
-					{
-						bodySubjects = new BodySubjects[] { bodySubs };
-						break;
-					}
+					case KerbalismSituation.SrfLanded:
+						if (vessel.situation == Vessel.Situations.PRELAUNCH || vessel.situation == Vessel.Situations.LANDED)
+							return situation; break;
+					case KerbalismSituation.SrfSplashed:
+						if (vessel.situation == Vessel.Situations.SPLASHED)
+							return situation; break;
+
+					// atmo situations
+					case KerbalismSituation.FlyingLow:
+						// if not in atmoshphere, skip the other atmo situations (this assume the 2 next situations are reentry and flying high)
+						if (!vessel.mainBody.atmosphere || vessel.altitude > vessel.mainBody.atmosphereDepth)
+						{ i += 2; break; }	
+						if (vessel.altitude < vessel.mainBody.scienceValues.flyingAltitudeThreshold)
+							return situation; break;
+					case KerbalismSituation.Reentry:
+						// note : checking vessel.mach > ~8-10 may be more accurate than using srfSpeed
+						if (vessel.loaded
+							&& vessel.orbit.ApA > vessel.mainBody.atmosphereDepth
+							&& vessel.verticalSpeed < -50.0
+							&& vessel.srfSpeed > 1984)
+							return situation; break;
+					case KerbalismSituation.FlyingHigh:
+						return situation;
+
+					// the radiation related situations will override spaceHigh and spaceLow
+					// we also assume that magnetosphere will override the belts
+					case KerbalismSituation.Magnetosphere:
+						vi = Cache.VesselInfo(vessel);
+						if (vi.magnetosphere)
+							return situation; break;
+					case KerbalismSituation.InnerBelt:
+						if (vi.inner_belt)
+							return situation; break;
+					case KerbalismSituation.OuterBelt:
+						if (vi.outer_belt)
+							return situation; break;
+					case KerbalismSituation.Interstellar:
+						if (vi.interstellar)
+							return situation; break;
+
+					// the generic space situation will override the others
+					case KerbalismSituation.InSpace:
+						return situation;
+					case KerbalismSituation.InSpaceLow:
+						if (vessel.altitude < vessel.mainBody.scienceValues.spaceAltitudeThreshold)
+							return situation; break;
+					case KerbalismSituation.InSpaceHigh:
+						return situation;
 				}
 			}
+			return KerbalismSituation.None;
+		}
 
-			if (bodySubjects == null) return subjects;
-
-			foreach (BodySubjects bodySub in bodySubjects)
+		private void BuildAvailableSituations()
+		{
+			int situationsCount = Enum.GetValues(typeof(KerbalismSituation)).Length - 1;
+			availableSituations = new SituationInfo[situationsCount];
+			for (int i = 0; i < situationsCount; i++)
 			{
-				foreach (SituationSubjects sitSubjects in bodySub.Situations)
+				if ((situationMask & (1 << i)) != 0)
 				{
-					if (situation == KerbalismSituation.None)
-					{
-						subjects.AddRange(sitSubjects.Subjects);
-					}
-					else if (sitSubjects.situation == situation)
-					{
-						subjects.AddRange(sitSubjects.Subjects);
-						return subjects;
-					}
+					availableSituations[i] = new SituationInfo();
+					// TODO : actually populate the situation
 				}
+				else
+				{
+					availableSituations[i] = null;
+				}
+				
+			}
+		}
+
+		private SituationInfo[] availableSituations;
+
+		private class SituationInfo
+		{
+			public double SituationMultiplier { get; private set; }
+			public double TotalScienceValue { get; private set; }
+			// Note on how to use this :
+			// - if the dictionary is null, the experiment is body independant (only one subject per situation, regardless of the body)
+			// - if the BitArray is null, the situation/body combination is biome independant
+			// - the BitArray is a bitmask of the available biomes, indexes match thoses from the body.BiomeMap.Attributes array.
+			public Dictionary<CelestialBody, BitArray> availableBodiesAndBiomes;
+
+			public bool IsAvailable(CelestialBody body, CBAttributeMapSO.MapAttribute biome)
+			{
+				// if the situation is body independant
+				if (availableBodiesAndBiomes == null)
+					return true;
+
+				// if the situation isn't available for the current body
+				if (!availableBodiesAndBiomes.ContainsKey(body))
+					return false;
+
+				// if the situation is biome independant
+				if (availableBodiesAndBiomes[body] == null)
+					return true;
+
+				// if the vessel current biome is available in this experiment, return true, else return false
+				return availableBodiesAndBiomes[body][Science.GetBiomeIndex(biome)];
 			}
 
-			return subjects;
-		}
+			public override string ToString()
+			{
+				// if the situation is body independant
+				if (availableBodiesAndBiomes == null)
+					return "(global)";
 
-		public BodySubjects[] allSubjects;
+				return string.Empty;
+				// TODO : finish that
 
-		public class BodySubjects
-		{
-			public CelestialBody Body { get; private set; }
-			public SituationSubjects[] Situations { get; private set; }
-			public double TotalScienceValue { get; private set; }
-		}
+				//// if the situation isn't available for the current body
+				//if (!availableBodiesAndBiomes.ContainsKey(body))
+				//	return false;
 
-		public class SituationSubjects
-		{
-			public KerbalismSituation situation { get; private set; }
-			public Subject[] Subjects { get; private set; }
-			public bool UseBiomes { get; private set; }
-			public double TotalScienceValue { get; private set; }
+				//// if the situation is biome independant
+				//if (availableBodiesAndBiomes[body] == null)
+				//	return true;
+
+				//// if the vessel current biome is available in this experiment, return true, else return false
+				//return availableBodiesAndBiomes[body][Science.GetBiomeIndex(biome)];
+			}
 		}
 	}
 }

@@ -27,7 +27,7 @@ namespace KERBALISM
 		/// NOT IMPLEMENTED : the max amount of science this result can yeld, regardless of the base value
 		/// would need to be set from the processes in Process(), after the result has been created in Science.Update()
 		/// </summary>
-		public float scienceCap;
+		public double scienceCap;
 
 		// non persisted field. Those are used for UI purposes AND to know if empty Results should be deleted.
 
@@ -53,8 +53,11 @@ namespace KERBALISM
 		public long MaxBufferSize => subject.MaxBufferSize;
 		/// <summary>max size in bit</summary>
 		public long MaxSize => subject.expInfo.fullSize;
-		/// <summary>experiment base science points value (body multiplier and ScienceGainMultiplier not applied)</summary>
-		public double MaxScienceValue => subject.expInfo.scienceValue;
+		/// <summary>
+		/// base science points value, accounting for an eventual ScienceCap set on the result
+		/// (body multiplier and ScienceGainMultiplier not applied)
+		/// </summary>
+		public double MaxScienceValue => scienceCap > 0.0 ? scienceCap : subject.expInfo.scienceValue;
 		/// <summary>sample only : mass in ton/bit</summary>
 		public double MassPerBit => subject.expInfo.massPerBit;
 		/// <summary> will be shown as the main title in the file manager</summary>
@@ -85,6 +88,7 @@ namespace KERBALISM
 			transfer = Lib.ConfigValue(node, "transfer", false);
 			process = Lib.ConfigValue(node, "process", false);
 			bufferSize = Lib.ConfigValue(node, "transmitBuffer", 0);
+			scienceCap = Lib.ConfigValue(node, "scienceCap", 0.0);
 
 			switch (Lib.ConfigValue(node, "type", -1))
 			{
@@ -109,11 +113,12 @@ namespace KERBALISM
 		}
 
 		/// <summary>main ctor</summary>
-		public Result(Drive drive, FileType type, Subject subject, long size = 0)
+		public Result(Drive drive, FileType type, Subject subject, double scienceCap = -1.0)
 		{
 			this.subject = subject;
 			this.type = type;
-			this.size = size;
+			this.scienceCap = scienceCap;
+			size = 0;
 			subjectId = subject.SubjectId;
 			transfer = false;
 			process = type == FileType.File ? PreferencesScience.Instance.transmitScience : PreferencesScience.Instance.analyzeSamples;
@@ -132,24 +137,28 @@ namespace KERBALISM
 
 		/// <summary>generic constructor for custom results (Stock, API...)</summary>
 		/// <param name="size">in bit</param>
-		/// <param name="maxSize">in bit, max allowed is 1024 Terabyte</param>
-		/// <param name="scienceValue">in science point for maxSize</param>
-		/// <param name="massPerBit">in ton/bit</param>
-		public Result(Drive drive, FileType type, string subject_id, long size = 0)
+		/// <param name="scienceCap">optional cap on the science points this result will generate (if used, must be lower than the ExperiementInfo scienceValue)</param>
+		public Result(Drive drive, FileType type, string subjectId, long size = 0, double scienceCap = -1.0)
 		{
 			this.type = type;
 			this.size = size;
-			this.subjectId = subject_id;
+			this.subjectId = subjectId;
+			
 			transfer = false;
 			process = type == FileType.File ? PreferencesScience.Instance.transmitScience : PreferencesScience.Instance.analyzeSamples;
 			bufferSize = 0;
 
-			subject = Science.GetSubjectFromCache(subject_id);
+			subject = Science.GetSubjectFromCache(subjectId);
 			if (subject == null)
 			{
-				Lib.Log("ERROR : Subject not found for result with subject_id '" + subject_id + "'");
+				Lib.Log("ERROR : Subject not found for result with subject_id '" + subjectId + "'");
 				return;
 			}
+
+			if (scienceCap > 0.0 && subject.expInfo.scienceValue > scienceCap)
+				this.scienceCap = -1.0;
+			else
+				this.scienceCap = scienceCap;
 
 			// if we return before setting the references, the object should be GC'ed
 			this.drive = drive;
@@ -176,6 +185,7 @@ namespace KERBALISM
 			transfer = false; // this ctor is used for copy/transfers : always reset the transfer flag
 			process = oldResult.process;
 			bufferSize = oldResult.BufferSize;
+			scienceCap = oldResult.scienceCap;
 		}
 
 		public void Save(ConfigNode node)
@@ -186,6 +196,7 @@ namespace KERBALISM
 			node.AddValue("size", size);
 			node.AddValue("transfer", transfer);
 			node.AddValue("process", process);
+			node.AddValue("scienceCap", scienceCap);
 		}
 
 		/// <summary> science value of the result, ignoring the ScienceGainMultiplier</summary>
@@ -208,16 +219,18 @@ namespace KERBALISM
 			// Comments are how (I think) stock is setting each value :
 
 			// set at subject creation : ScienceExperiment.dataScale
-			float dataScale = (float)(MaxSize / MaxScienceValue);
+			// Note : stock should ignore our custom scienceCap implementation
+			float dataScale = (float)(MaxSize / subject.expInfo.scienceValue);
 
 			// set at subject creation : body multiplier
 			float subjectValue = subject.BodyScienceValue();
 
 			// set at subject creation : ScienceExperiment.scienceCap * body multiplier
-			float scienceCap = (float)(MaxScienceValue * subjectValue);
+			// Note : stock should ignore our custom scienceCap implementation
+			float scienceCap = (float)(subject.expInfo.scienceValue * subjectValue);
 
-			// the current amount of science point stored, set to 0 at subject creation
-			// increased every time some science points are credited (SubmitScienceData() method)
+			// for the subject object stored in RnD, this is the current amount of science point stored,
+			// set to 0 at subject creation and increased every time some science points are credited (SubmitScienceData() method)
 			// HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier NOT applied
 			float science = onlyTransmitBuffer ?
 				(float)ScienceValueBase(BufferSize) :
@@ -225,7 +238,7 @@ namespace KERBALISM
 
 			ScienceSubject stockSubject = new ScienceSubject(subjectId, Title, dataScale, subjectValue, scienceCap);
 			stockSubject.science = science;
-			stockSubject.scientificValue = ResearchAndDevelopment.GetSubjectValue(stockSubject.science, stockSubject);
+			stockSubject.scientificValue = ResearchAndDevelopment.GetSubjectValue(science, stockSubject);
 			return stockSubject;
 		}
 
