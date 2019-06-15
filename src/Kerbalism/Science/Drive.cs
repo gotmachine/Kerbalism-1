@@ -114,7 +114,7 @@ namespace KERBALISM
 		}
 
 		// add science data, creating new file or incrementing existing one
-		public bool Record_file(string subject_id, double amount, bool allowImmediateTransmission = true)
+		public bool Record_file(string subject_id, double amount, bool allowImmediateTransmission = true, bool clamp = true)
 		{
 			if (dataCapacity >= 0 && FilesSize() + amount > dataCapacity)
 				return false;
@@ -219,7 +219,7 @@ namespace KERBALISM
 
 				if(file.buff > double.Epsilon && pv != null)
 				{
-					Science.Credit(subject_id, file.buff, true, pv);
+					Science.Credit(subject_id, file.buff, true, pv, true);
 					file.buff = 0;
 				}
 
@@ -268,7 +268,7 @@ namespace KERBALISM
 			var filesList = new List<string>();
 			foreach (var p in files)
 			{
-				double size = Math.Max(p.Value.size, destination.FileCapacityAvailable());
+				double size = Math.Min(p.Value.size, destination.FileCapacityAvailable());
 				if (destination.Record_file(p.Key, size, true))
 				{
 					destination.files[p.Key].buff += p.Value.buff; //< move the buffer along with the size
@@ -494,7 +494,7 @@ namespace KERBALISM
 					if (p.Value.buff > double.Epsilon)
 					{
 						Lib.Log("Purge, crediting " + p.Key + " of " + p.Value.buff);
-						Science.Credit(p.Key, p.Value.buff, true, proto_vessel);
+						Science.Credit(p.Key, p.Value.buff, true, proto_vessel, true);
 					}
 				}
 			}
@@ -528,7 +528,7 @@ namespace KERBALISM
 					{
 						if(p.Value.buff > double.Epsilon)
 						{
-							Science.Credit(p.Key, p.Value.buff, true, vessel.protoVessel);
+							Science.Credit(p.Key, p.Value.buff, true, vessel.protoVessel, true);
 						}
 					}
 				}
@@ -541,23 +541,30 @@ namespace KERBALISM
 			Dictionary<uint, Drive> result = Cache.VesselObjectsCache<Dictionary<uint, Drive>>(vessel, "drives");
 			if (result != null)
 				return result;
-
 			result = new Dictionary<uint, Drive>();
 
 			if(vessel.loaded)
 			{
 				foreach (var hd in vessel.FindPartModulesImplementing<HardDrive>())
 				{
-					if (DB.drives.ContainsKey(hd.part.flightID))
-						result.Add(hd.part.flightID, DB.drives[hd.part.flightID]);
+					// Serenity/ModuleManager bug workaround (duplicate drives on EVAs)
+					if (result.ContainsKey(hd.part.flightID))
+						continue;
+
+					if (hd.hdId != 0 && DB.drives.ContainsKey(hd.hdId))
+						result.Add(hd.part.flightID, DB.drives[hd.hdId]);
 				}
 			}
 			else
 			{
-				foreach (var hd in vessel.protoVessel.protoPartSnapshots)
+				foreach (var p in vessel.protoVessel.protoPartSnapshots)
 				{
-					if (DB.drives.ContainsKey(hd.flightID))
-						result.Add(hd.flightID, DB.drives[hd.flightID]);
+					foreach(var pm in Lib.FindModules(p, "HardDrive"))
+					{
+						var hdId = Lib.Proto.GetUInt(pm, "hdId", 0);
+						if (hdId != 0 && DB.drives.ContainsKey(hdId))
+							result.Add(p.flightID, DB.drives[hdId]);
+					}
 				}
 			}
 

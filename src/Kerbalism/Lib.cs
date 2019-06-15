@@ -336,14 +336,14 @@ namespace KERBALISM
 			return (T)instance.GetType().GetField(field_name, flags).GetValue(instance);
 		}
 
-		public static void ReflectionCall(PartModule m, string call_name)
+		public static void ReflectionCall(object m, string call_name)
 		{
-			m.GetType().GetMethod(call_name).Invoke(m, null);
+			m.GetType().GetMethod(call_name, flags).Invoke(m, null);
 		}
 
-		public static T ReflectionCall<T>(PartModule m, string call_name)
+		public static T ReflectionCall<T>(object m, string call_name)
 		{
-			return (T)(m.GetType().GetMethod(call_name).Invoke(m, null));
+			return (T)(m.GetType().GetMethod(call_name, flags).Invoke(m, null));
 		}
 
 
@@ -717,13 +717,13 @@ namespace KERBALISM
 			return (Math.Abs(value) <= 0 ? "none" : BuildString(value.ToString("F0"), append));
 		}
 
-		///<summary> Format data size, the size parameter is in MB </summary>
+		///<summary> Format data size, the size parameter is in MB (megabytes) </summary>
 		public static string HumanReadableDataSize(double size)
 		{
-			size *= 131072.0; //< bits
+			size *= 1024.0 * 1024.0 * 8.0; //< bits
 			if (size < 0.01) return "none";
 			if (size <= 32.0) return BuildString(size.ToString("F0"), " b");
-			size *= 8; //< to bytes
+			size /= 8; //< to bytes
 			if (size < 1024.0) return BuildString(size.ToString("F0"), " B");
 			size /= 1024.0;
 			if (size < 1024.0) return BuildString(size.ToString("F2"), " kB");
@@ -949,7 +949,17 @@ namespace KERBALISM
 			// - the user can change vessel type, in that case he is actually disabling this mod for the vessel
 			//   the alternative is to scan the vessel for ModuleCommand, but that is slower, and rescue vessels have no module command
 			// - flags have type set to 'station' for a single update, can still be detected as they have vesselID == 0
-			if (v.vesselType == VesselType.Debris || v.vesselType == VesselType.Flag || v.vesselType == VesselType.SpaceObject || v.vesselType == VesselType.Unknown) return false;
+			switch(v.vesselType)
+			{
+				case VesselType.Debris:
+				case VesselType.Flag:
+				case VesselType.SpaceObject:
+				case VesselType.Unknown:
+#if !KSP170 && !KSP16 && !KSP15 && !KSP14
+				case VesselType.DeployedSciencePart:
+#endif
+					return false;
+			}
 
 			// [disabled] when going to eva (and possibly other occasions), for a single update the vessel is not properly set
 			// this can be detected by vessel.distanceToSun being 0 (an impossibility otherwise)
@@ -958,6 +968,28 @@ namespace KERBALISM
 
 			// the vessel is valid
 			return true;
+		}
+
+
+#if !KSP170 && !KSP16 && !KSP15 && !KSP14
+		public static bool IsControlUnit(Vessel v)
+		{
+			return Serenity.GetScienceCluster(v) != null;
+		}
+#else
+		public static bool IsControlUnit(Vessel v) {
+			return false;
+		}
+#endif
+
+		public static bool IsPowered(Vessel v)
+		{
+#if !KSP170 && !KSP16 && !KSP15 && !KSP14
+			var cluster = Serenity.GetScienceCluster(v);
+			if (cluster != null)
+				return cluster.IsPowered;
+#endif
+			return ResourceCache.Info(v, "ElectricCharge").amount > double.Epsilon;
 		}
 
 		public static Guid VesselID(Vessel v)
@@ -1852,6 +1884,37 @@ namespace KERBALISM
 				true,
 				string.Empty
 			);
+		}
+
+		public static string Greek() {
+			string[] letters = {
+				"Alpha",
+				"Beta",
+				"Gamma",
+				"Delta",
+				"Epsilon",
+				"Zeta",
+				"Eta",
+				"Theta",
+				"Iota",
+				"Kappa",
+				"Lambda",
+				"Mu",
+				"Nu",
+				"Xi",
+				"Omicron",
+				"Pi",
+				"Sigma",
+				"Tau",
+				"Upsilon",
+				"Phi",
+				"Chi",
+				"Psi",
+				"Omega"
+			};
+			System.Random rand = new System.Random();
+			int index = rand.Next(letters.Length);
+			return (string)letters[index];
 		}
 
 		// --- PROTO ----------------------------------------------------------------

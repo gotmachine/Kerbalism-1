@@ -11,8 +11,7 @@ namespace KERBALISM
 	{
 		// this controls how fast science is credited while it is being transmitted.
 		// try to be conservative here, because crediting introduces a lag
-		private const double buffer_science_value = 0.4; // min. 0.01 value
-		private const double min_buffer_size = 0.01; // min. 10kB
+		private const double buffer_science_value = 0.3;
 
 		// this is for auto-transmit throttling
 		public const double min_file_size = 0.002;
@@ -111,18 +110,15 @@ namespace KERBALISM
 				// special case: file size on drive = 0 -> buffer is 0, so no need to do anyhting. just delete.
 				if (file.buff > double.Epsilon)
 				{
-					bool credit = file.size <= double.Epsilon;
-
 					// this is the science value remaining for this experiment
 					var remainingValue = Value(exp_filename, 0);
 
 					// this is the science value of this sample
 					double dataValue = Value(exp_filename, file.buff);
+					bool doCredit = file.size <= double.Epsilon || dataValue > buffer_science_value;;
 
-					if (!credit && file.buff > min_buffer_size) credit = dataValue > buffer_science_value;
-
-					// if buffer is full, or file was transmitted completely
-					if (credit)
+					// if buffer science value is high enough or file was transmitted completely
+					if (doCredit)
 					{
 						var totalValue = TotalValue(exp_filename);
 
@@ -169,7 +165,7 @@ namespace KERBALISM
 			if (!linked) return string.Empty;
 
 			// not transmitting if there is no ec left
-			if (ResourceCache.Info(v, "ElectricCharge").amount <= double.Epsilon) return string.Empty;
+			if (!Lib.IsPowered(v)) return string.Empty;
 
 			foreach(var p in Cache.WarpCache(v).files)
 				return p.Key;
@@ -188,11 +184,57 @@ namespace KERBALISM
 			return string.Empty;
 		}
 
+		public static void ClearDeferred()
+		{
+			deferredCredit.Clear();
+		}
+
+		public static void CreditAllDeferred()
+		{
+			foreach(var deferred in deferredCredit.Values)
+			{
+				Credit(deferred.subject_id, deferred.size, true, deferred.pv, true);
+			}
+			deferredCredit.Clear();
+		}
+
+		private static void CreditDeferred(string subject_id, double size, ProtoVessel pv)
+		{
+			if (deferredCredit.ContainsKey(subject_id))
+			{
+				var deferred = deferredCredit[subject_id];
+				deferred.size += size;
+				deferred.pv = pv;
+
+				var credits = Value(subject_id, deferred.size);
+				if(credits >= buffer_science_value)
+				{
+					deferredCredit.Remove(subject_id);
+					Credit(subject_id, deferred.size, true, pv, true);
+				}
+			}
+			else
+			{
+				deferredCredit.Add(subject_id, new DeferredCreditValues(subject_id, size, pv));
+			}
+		}
 
 		// credit science for the experiment subject specified
-		public static float Credit(string subject_id, double size, bool transmitted, ProtoVessel pv)
+		public static float Credit(string subject_id, double size, bool transmitted, ProtoVessel pv, bool enforced_credit = false)
 		{
 			var credits = Value(subject_id, size);
+
+			if(!enforced_credit && transmitted && credits < buffer_science_value) {
+				CreditDeferred(subject_id, size, pv);
+				return credits;
+			}
+
+			if(deferredCredit.ContainsKey(subject_id)) {
+				var deferred = deferredCredit[subject_id];
+				size += deferred.size;
+				deferred.size = 0;
+				credits = Value(subject_id, size);
+			}
 
 			// credit the science
 			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
@@ -219,7 +261,6 @@ namespace KERBALISM
 			return credits;
 		}
 
-
 		// return value of some data about a subject, in science credits
 		public static float Value(string subject_id, double size = 0)
 		{
@@ -237,10 +278,7 @@ namespace KERBALISM
 			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
 			if (subject == null) return 0.0f;
 
-			// get science value
-			// - the stock system 'degrade' science value after each credit, we don't
-			double R = ResearchAndDevelopment.GetReferenceDataValue((float)size, subject);
-
+			double R = size / subject.dataScale * subject.subjectValue;
 			double S = subject.science;
 			double C = subject.scienceCap;
 			double credits = Math.Max(Math.Min(S + Math.Min(R, C), C) - S, 0.0);
@@ -261,7 +299,7 @@ namespace KERBALISM
 			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
 			if (subject == null) return 0.0f;
 
-			double credits = ResearchAndDevelopment.GetReferenceDataValue((float)size, subject);
+			double credits = size / subject.dataScale * subject.subjectValue;
 			credits *= HighLogic.CurrentGame.Parameters.Career.ScienceGainMultiplier;
 
 			return (float)credits;
@@ -440,31 +478,31 @@ namespace KERBALISM
 					case "Module": good = Lib.FindModules(v.protoVessel, value).Count > 0; break;
 						
 					case "AstronautComplexLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.AstronautComplex) >= (double.Parse(value) - 1) / 2.0;
+						good = (ScenarioUpgradeableFacilities.Instance == null) || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.AstronautComplex) >= (double.Parse(value) - 1) / 2.0;
 						break;
 					case "AstronautComplexLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.AstronautComplex) <= (double.Parse(value) - 1) / 2.0;
+						good = (ScenarioUpgradeableFacilities.Instance == null) || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.AstronautComplex) <= (double.Parse(value) - 1) / 2.0;
 						break;
 
 					case "TrackingStationLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.TrackingStation) >= (double.Parse(value) - 1) / 2.0;
+						good = (ScenarioUpgradeableFacilities.Instance == null) || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.TrackingStation) >= (double.Parse(value) - 1) / 2.0;
 						break;
 					case "TrackingStationLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.TrackingStation) <= (double.Parse(value) - 1) / 2.0;
+						good = (ScenarioUpgradeableFacilities.Instance == null) || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.TrackingStation) <= (double.Parse(value) - 1) / 2.0;
 						break;
 
 					case "MissionControlLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.MissionControl) >= (double.Parse(value) - 1) / 2.0;
+						good = (ScenarioUpgradeableFacilities.Instance == null) || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.MissionControl) >= (double.Parse(value) - 1) / 2.0;
 						break;
 					case "MissionControlLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.MissionControl) <= (double.Parse(value) - 1) / 2.0;
+						good = (ScenarioUpgradeableFacilities.Instance == null) || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.MissionControl) <= (double.Parse(value) - 1) / 2.0;
 						break;
 
 					case "AdministrationLevelMin":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.Administration) >= (double.Parse(value) - 1) / 2.0;
+						good = (ScenarioUpgradeableFacilities.Instance == null) || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.Administration) >= (double.Parse(value) - 1) / 2.0;
 						break;
 					case "AdministrationLevelMax":
-						good = !ScenarioUpgradeableFacilities.Instance.enabled || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.Administration) <= (double.Parse(value) - 1) / 2.0;
+						good = (ScenarioUpgradeableFacilities.Instance == null) || ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.Administration) <= (double.Parse(value) - 1) / 2.0;
 						break;
 
 					case "MaxAsteroidDistance": good = AsteroidDistance(v) <= double.Parse(value); break;
@@ -474,6 +512,7 @@ namespace KERBALISM
 			}
 
 			var subject_id = Science.Generate_subject_id(experiment_id, v);
+
 			var exp = Science.Experiment(subject_id);
 			var sit = GetExperimentSituation(v);
 
@@ -658,6 +697,20 @@ namespace KERBALISM
 		static readonly Dictionary<string, ExperimentInfo> experiments = new Dictionary<string, ExperimentInfo>();
 		readonly static Dictionary<string, double> sampleMasses = new Dictionary<string, double>();
 
+		private class DeferredCreditValues {
+			internal string subject_id;
+			internal double size;
+			internal ProtoVessel pv;
+
+			public DeferredCreditValues(string subject_id, double size, ProtoVessel pv)
+			{
+				this.subject_id = subject_id;
+				this.size = size;
+				this.pv = pv;
+			}
+		}
+
+		static readonly Dictionary<string, DeferredCreditValues> deferredCredit = new Dictionary<string, DeferredCreditValues>();
 	}
 
 } // KERBALISM

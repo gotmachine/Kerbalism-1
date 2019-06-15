@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
+using Harmony;
 using KSP.UI.Screens;
 
 
@@ -69,6 +71,10 @@ namespace KERBALISM
 				Highlighter.Init();
 				UI.Init();
 
+#if !KSP170 && !KSP16 && !KSP15 && !KSP14
+				Serenity.Init();
+#endif
+
 				// prepare storm data
 				foreach (CelestialBody body in FlightGlobals.Bodies)
 				{
@@ -105,11 +111,14 @@ namespace KERBALISM
 				// remember savegame id
 				savegame_uid = DB.uid;
 			}
+
+			Science.ClearDeferred();
 		}
 
 		public override void OnSave(ConfigNode node)
 		{
 			// serialize data
+			Science.CreditAllDeferred();
 			DB.Save(node);
 		}
 

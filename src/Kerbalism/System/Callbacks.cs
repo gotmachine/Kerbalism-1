@@ -20,6 +20,7 @@ namespace KERBALISM
 			GameEvents.onVesselRecovered.Add(this.VesselRecovered);
 			GameEvents.onVesselTerminated.Add(this.VesselTerminated);
 			GameEvents.onVesselWillDestroy.Add(this.VesselDestroyed);
+			GameEvents.onNewVesselCreated.Add(this.VesselCreated);
 			GameEvents.onPartCouple.Add(this.VesselDock);
 
 			GameEvents.onVesselChange.Add((v) => { Cache.PurgeObjects(v); });
@@ -47,7 +48,7 @@ namespace KERBALISM
 			GameEvents.onGUILaunchScreenSpawn.Add((_) => visible = false);
 			GameEvents.onGUILaunchScreenDespawn.Add(() => visible = true);
 
-			GameEvents.onGameSceneSwitchRequested.Add((_) => { visible = false; Cache.PurgeObjects(); });
+			GameEvents.onGameSceneSwitchRequested.Add((_) => { visible = false; Cache.PurgeObjects(); Science.CreditAllDeferred(); });
 			GameEvents.onGUIApplicationLauncherReady.Add(() => visible = true);
 
 			GameEvents.CommNet.OnNetworkInitialized.Add(() => Kerbalism.Fetch.StartCoroutine(NetworkInitialized()));
@@ -192,7 +193,7 @@ namespace KERBALISM
 					ScienceSubject subject = ResearchAndDevelopment.GetSubjectByID(filename);
 
 					// credit science
-					float credits = Science.Credit(filename, file.size, false, v);
+					float credits = Science.Credit(filename, file.size, false, v, true);
 
 					// create science widged
 					ScienceSubjectWidget widged = ScienceSubjectWidget.Create
@@ -222,7 +223,7 @@ namespace KERBALISM
 					ScienceSubject subject = ResearchAndDevelopment.GetSubjectByID(filename);
 
 					// credit science
-					float credits = Science.Credit(filename, sample.size, false, v);
+					float credits = Science.Credit(filename, sample.size, false, v, true);
 
 					// create science widged
 					ScienceSubjectWidget widged = ScienceSubjectWidget.Create
@@ -288,6 +289,13 @@ namespace KERBALISM
 			Cache.PurgeObjects(pv);
 		}
 
+		void VesselCreated(Vessel v)
+		{
+#if !KSP170 && !KSP16 && !KSP15 && !KSP14
+			if (Serenity.GetModuleGroundExpControl(v) != null)
+				v.vesselName = Lib.BuildString(v.mainBody.name, " Surface Experiment ", Lib.Greek());
+#endif
+		}
 
 		void VesselDestroyed(Vessel v)
 		{
@@ -361,7 +369,7 @@ namespace KERBALISM
 				{
 					if(pair.Value.buff > double.Epsilon)
 					{
-						Science.Credit(pair.Key, pair.Value.buff, true, p.vessel.protoVessel);
+						Science.Credit(pair.Key, pair.Value.buff, true, p.vessel.protoVessel, true);
 					}
 				}
 			}

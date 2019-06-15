@@ -78,12 +78,19 @@ namespace KERBALISM
 			if (ai.strength > -1)
 				return ai;
 
+#if !KSP170 && !KSP16 && !KSP15 && !KSP14
+			// Serenity
+			var cluster = Serenity.GetScienceCluster(v);
+			if (cluster != null)
+				return new AntennaInfoSerenity(v, cluster, storm, ai.transmitting).AntennaInfo();
+#endif
+
 			// if CommNet is enabled
 			if (HighLogic.fetch.currentGame.Parameters.Difficulty.EnableCommNet)
-				return new AntennaInfoCommNet(v, powered, storm, ai.transmitting);
+				return new AntennaInfoCommNet(v, powered, storm, ai.transmitting).AntennaInfo();
 
 			// default: the simple stupid always connected signal system
-			AntennaInfoCommNet antennaInfo = new AntennaInfoCommNet(v, powered, storm, ai.transmitting);
+			AntennaInfo antennaInfo = new AntennaInfoCommNet(v, powered, storm, ai.transmitting).AntennaInfo();
 
 			antennaInfo.ec *= 0.16;
 			antennaInfo.linked = true;
