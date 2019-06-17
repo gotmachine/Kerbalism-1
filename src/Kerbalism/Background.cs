@@ -48,7 +48,7 @@ namespace KERBALISM
 				case "Emitter": return Module_type.Emitter;
 				case "Laboratory": return Module_type.Laboratory;
 				case "ModuleCommand": return Module_type.Command;
-				//case "ModuleDeployableSolarPanel": return Module_type.Panel;
+				case "ModuleDeployableSolarPanel": return Module_type.Panel;
 				case "ModuleGenerator": return Module_type.Generator;
 				case "ModuleResourceConverter":
 				case "ModuleKPBSConverter":
@@ -62,7 +62,7 @@ namespace KERBALISM
 				case "ModuleColoredLensLight":
 				case "ModuleMultiPointSurfaceLight": return Module_type.Light;
 				case "KerbalismScansat": return Module_type.Scanner;
-				//case "ModuleCurvedSolarPanel": return Module_type.CurvedPanel;
+				case "ModuleCurvedSolarPanel": return Module_type.CurvedPanel;
 				case "FissionGenerator": return Module_type.FissionGenerator;
 				case "ModuleRadioisotopeGenerator": return Module_type.RadioisotopeGenerator;
 				case "ModuleCryoTank": return Module_type.CryoTank;
@@ -109,7 +109,7 @@ namespace KERBALISM
 					case Module_type.Harvester: Harvester.BackgroundUpdate(v, e.m, e.module_prefab as Harvester, elapsed_s); break; // Kerbalism ground and air harvester module
 					case Module_type.Laboratory: Laboratory.BackgroundUpdate(v, e.p, e.m, e.module_prefab as Laboratory, ec, elapsed_s); break;
 					case Module_type.Command: ProcessCommand(v, e.p, e.m, e.module_prefab as ModuleCommand, resources, elapsed_s); break;
-					//case Module_type.Panel: ProcessPanel(v, e.p, e.m, e.module_prefab as ModuleDeployableSolarPanel, vi, ec, elapsed_s); break;
+					case Module_type.Panel: ProcessPanel(v, e.p, e.m, e.module_prefab as ModuleDeployableSolarPanel, vi, ec, elapsed_s); break;
 					case Module_type.Generator: ProcessGenerator(v, e.p, e.m, e.module_prefab as ModuleGenerator, resources, elapsed_s); break;
 					case Module_type.Converter: ProcessConverter(v, e.p, e.m, e.module_prefab as ModuleResourceConverter, resources, elapsed_s); break;
 					case Module_type.Drill: ProcessDrill(v, e.p, e.m, e.module_prefab as ModuleResourceHarvester, resources, elapsed_s); break; // Stock ground harvester module
@@ -117,7 +117,7 @@ namespace KERBALISM
 					case Module_type.StockLab: ProcessStockLab(v, e.p, e.m, e.module_prefab as ModuleScienceConverter, ec, elapsed_s); break;
 					case Module_type.Light: ProcessLight(v, e.p, e.m, e.module_prefab as ModuleLight, ec, elapsed_s); break;
 					case Module_type.Scanner: KerbalismScansat.BackgroundUpdate(v, e.p, e.m, e.module_prefab as KerbalismScansat, e.part_prefab, vd, ec, elapsed_s); break;
-					//case Module_type.CurvedPanel: ProcessCurvedPanel(v, e.p, e.m, e.module_prefab, e.part_prefab, vi, ec, elapsed_s); break;
+					case Module_type.CurvedPanel: ProcessCurvedPanel(v, e.p, e.m, e.module_prefab, e.part_prefab, vi, ec, elapsed_s); break;
 					case Module_type.FissionGenerator: ProcessFissionGenerator(v, e.p, e.m, e.module_prefab, ec, elapsed_s); break;
 					case Module_type.RadioisotopeGenerator: ProcessRadioisotopeGenerator(v, e.p, e.m, e.module_prefab, ec, elapsed_s); break;
 					case Module_type.CryoTank: ProcessCryoTank(v, e.p, e.m, e.module_prefab, resources, ec, elapsed_s); break;
@@ -212,7 +212,7 @@ namespace KERBALISM
 			}
 		}
 
-		/*
+
 		static void ProcessPanel(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleDeployableSolarPanel panel, Vessel_info info, Resource_info ec, double elapsed_s)
 		{
 			// note: we ignore temperature curve, and make sure it is not relevant in the MM patch
@@ -255,7 +255,7 @@ namespace KERBALISM
 				ec.Produce(output * elapsed_s, "panel");
 			}
 		}
-		*/
+
 
 		static void ProcessGenerator(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleGenerator generator, Vessel_resources resources, double elapsed_s)
 		{
@@ -547,7 +547,6 @@ namespace KERBALISM
 		}
 		*/
 
-		/*
 		static void ProcessCurvedPanel(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule curved_panel, Part part_prefab, Vessel_info info, Resource_info ec, double elapsed_s)
 		{
 			// note: we assume deployed, this is a current limitation
@@ -588,7 +587,7 @@ namespace KERBALISM
 				ec.Produce(output * elapsed_s, "curvedpanel");
 			}
 		}
-		*/
+
 
 		static void ProcessFissionGenerator(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule fission_generator, Resource_info ec, double elapsed_s)
 		{
