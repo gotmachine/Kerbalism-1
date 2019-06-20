@@ -54,7 +54,7 @@ namespace KERBALISM
 			GameEvents.CommNet.OnNetworkInitialized.Add(() => Kerbalism.Fetch.StartCoroutine(NetworkInitialized()));
 
 			// add editor events
-			GameEvents.onEditorShipModified.Add((sc) => Planner.Planner.EditorShipModifiedEvent(sc));
+			GameEvents.onEditorShipModified.Add((sc) => Planner.Planner.OnEditorShipModified(sc));
 		}
 
 		public IEnumerator NetworkInitialized()

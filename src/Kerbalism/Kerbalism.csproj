@@ -57,6 +57,7 @@
     <When Condition="'$(Configuration)'=='Release' Or '$(Configuration)'=='Debug'">
       <ItemGroup>
         <Reference Include="0Harmony.dll">
+          <HintPath Condition="Exists('$(KSPDEVDIR)\GameData\Kerbalism\0Harmony.1.2.0.1.dll')">$(KSPDEVDIR)\GameData\Kerbalism\0Harmony.1.2.0.1.dll</HintPath>
           <HintPath Condition="Exists('..\..\packages\Lib.Harmony.1.2.0.1\lib\net32\0Harmony.dll')">..\..\packages\Lib.Harmony.1.2.0.1\lib\net32\0Harmony.dll</HintPath>
           <HintPath Condition="Exists('..\DLLs\0Harmony.dll')">..\DLLs\0Harmony.dll</HintPath>
           <Private>False</Private>
@@ -197,7 +198,7 @@
     <Compile Include="Modules\Sensor.cs" />
     <Compile Include="Modules\Experiment.cs" />
     <Compile Include="Modules\Reliability.cs" />
-    <Compile Include="Modules\WarpFixer.cs" />
+    <Compile Include="Modules\SolarPanelFixer.cs" />
     <Compile Include="Profile\Modifiers.cs" />
     <Compile Include="Profile\Process.cs" />
     <Compile Include="Renderer\LineRenderer.cs" />
@@ -307,7 +308,7 @@
       <Output TaskParameter="Assemblies" ItemName="Targets" />
     </GetAssemblyIdentity>
     <ItemGroup>
-      <VersionNumber Include="@(Targets-&gt;'%(Version)')" />
+      <VersionNumber Include="@(Targets->'%(Version)')" />
     </ItemGroup>
   </Target>
   <PropertyGroup>

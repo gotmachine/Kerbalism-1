@@ -6,7 +6,6 @@ using UnityEngine;
 
 namespace KERBALISM.Planner
 {
-
 	///<summary> Class for the Planner used in the VAB/SPH, it is used to predict resource production/consumption and
 	/// provide information on life support, radiation, comfort and other relevant factors. </summary>
 	internal static class Planner
@@ -80,11 +79,14 @@ namespace KERBALISM.Planner
 		#endregion
 
 		#region EVENTS
-		///<summary> Method called when the vessel in the editor has been modified </summary>
-		internal static void EditorShipModifiedEvent(ShipConstruct sc) => update_counter = 0;
+		///<summary> trigger a planner update from the onEditorShipModified GameEvent</summary>
+		internal static void OnEditorShipModified(ShipConstruct sc) => RefreshPlanner();
 		#endregion
 
 		#region METHODS
+		///<summary> Call this to trigger a planner update</summary>
+		internal static void RefreshPlanner() => update_counter = 0;
+
 		///<summary> Run simulators and update the planner UI sub-panels </summary>
 		internal static void Update()
 		{
